@@ -818,6 +818,13 @@ fn print_interface_verification(result: &observatory_verify::InterfaceVerificati
         println!("deployed_interface_sha256: {deployed}");
     }
     println!("artifact: {:?}", result.artifact.status);
+    println!("source_verification: {}", result.source_verification);
+    if let Some(diff) = &result.diff {
+        print_diff(diff);
+    }
+    if let Some(compatibility) = &result.compatibility {
+        print_compat(compatibility);
+    }
 }
 
 fn print_reproducibility(report: &observatory_verify::ReproducibilityReport) {

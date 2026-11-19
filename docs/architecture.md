@@ -45,7 +45,7 @@ ones. The CLI is the only crate that composes the whole graph.
 | `observatory-compat` | compatibility policy and verdicts | core, diff, interface, spec |
 | `observatory-rpc` | transport abstraction, typed models, mock/fixture transport | core |
 | `observatory-deployment` | deployed contract inspection, WASM hash recovery | core, rpc |
-| `observatory-verify` | verification verdicts and build metadata | core, deployment, rpc, wasm |
+| `observatory-verify` | verification verdicts, interface comparison, build metadata | core, compat, deployment, diff, interface, rpc, wasm |
 | `observatory-audit` | bounded heuristics | core, interface, spec, wasm |
 | `observatory-output` | report envelopes, JSON rendering | core |
 | `observatory-cli` | command-line interface | all of the above |

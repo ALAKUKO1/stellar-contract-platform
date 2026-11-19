@@ -15,8 +15,10 @@
 use std::collections::BTreeMap;
 use std::io::Cursor;
 
+use observatory_compat::{assess, CompatibilityAssessment, CompatibilityPolicy};
 use observatory_core::limits::MAX_SPEC_ENTRIES;
 use observatory_core::{ObservatoryError, Result};
+use observatory_diff::{diff, InterfaceDiff};
 use observatory_interface::ContractInterface;
 use observatory_rpc::{RpcClient, Transport};
 use serde::{Deserialize, Serialize};
@@ -317,6 +319,22 @@ pub fn verify_local_vs_deployed<T: Transport>(
     })
 }
 
+/// A source of deployed contract code, keyed by executable hash.
+///
+/// Live RPC fetching is blocked on issue #14; this trait keeps the interface
+/// comparison independent of the transport so callers and tests can inject a
+/// deterministic source. Implementations must never execute the returned code.
+pub trait DeployedCodeSource {
+    /// Return the deployed WASM for `wasm_hash`, or `None` when it is missing.
+    fn deployed_wasm(&self, wasm_hash: &str) -> Result<Option<Vec<u8>>>;
+}
+
+impl<T: Transport> DeployedCodeSource for RpcClient<T> {
+    fn deployed_wasm(&self, wasm_hash: &str) -> Result<Option<Vec<u8>>> {
+        observatory_deployment::deployed_wasm(self, wasm_hash)
+    }
+}
+
 /// Verification that separates artifact identity from interface identity.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct InterfaceVerification {
@@ -329,6 +347,14 @@ pub struct InterfaceVerification {
     pub local_interface_sha256: Option<String>,
     /// Canonical fingerprint of the deployed interface, when present.
     pub deployed_interface_sha256: Option<String>,
+    /// Interface diff with the local interface as the baseline, when both are
+    /// known.
+    pub diff: Option<InterfaceDiff>,
+    /// Compatibility of the deployed interface against the local interface,
+    /// when both are known.
+    pub compatibility: Option<CompatibilityAssessment>,
+    /// Always `not_performed`: this comparison never verifies source.
+    pub source_verification: String,
     /// A human-readable explanation.
     pub detail: String,
 }
@@ -344,13 +370,25 @@ pub fn verify_interface<T: Transport>(
     network: &str,
 ) -> Result<InterfaceVerification> {
     let artifact = verify_local_vs_deployed(local_wasm, client, contract_id, network)?;
+    verify_interface_with_source(local_wasm, artifact, client)
+}
+
+/// Compare interfaces using an injected deployed-code source.
+///
+/// The artifact identity comes from `artifact`; the deployed interface is loaded
+/// through `source` so the comparison can be tested without RPC.
+pub fn verify_interface_with_source<S: DeployedCodeSource>(
+    local_wasm: &[u8],
+    artifact: VerificationResult,
+    source: &S,
+) -> Result<InterfaceVerification> {
     let local_interface = ContractInterface::from_wasm(local_wasm).ok();
-    let deployed_wasm = match &artifact.deployed_wasm_hash {
-        Some(hash) => observatory_deployment::deployed_wasm(client, hash)?,
+    let deployed_interface = match &artifact.deployed_wasm_hash {
+        Some(hash) => source
+            .deployed_wasm(hash)?
+            .and_then(|bytes| ContractInterface::from_wasm(&bytes).ok()),
         None => None,
     };
-    let deployed_interface =
-        deployed_wasm.and_then(|bytes| ContractInterface::from_wasm(&bytes).ok());
 
     let local_fingerprint = local_interface
         .as_ref()
@@ -380,11 +418,22 @@ pub fn verify_interface<T: Transport>(
         ),
     };
 
+    let (interface_diff, compatibility) = match (&local_interface, &deployed_interface) {
+        (Some(local), Some(deployed)) => (
+            Some(diff(local, deployed)),
+            Some(assess(local, deployed, CompatibilityPolicy::strict())),
+        ),
+        _ => (None, None),
+    };
+
     Ok(InterfaceVerification {
         artifact,
         interface_match,
         local_interface_sha256: local_fingerprint,
         deployed_interface_sha256: deployed_fingerprint,
+        diff: interface_diff,
+        compatibility,
+        source_verification: "not_performed".to_string(),
         detail,
     })
 }
@@ -684,5 +733,73 @@ mod tests {
         let client = RpcClient::new(Endpoint::parse("https://example.org").unwrap(), transport);
         let result = verify_interface(&local, &client, &contract_id, "testnet").unwrap();
         assert_eq!(result.interface_match, Some(false));
+    }
+
+    struct MockSource(Option<Vec<u8>>);
+
+    impl DeployedCodeSource for MockSource {
+        fn deployed_wasm(&self, _wasm_hash: &str) -> Result<Option<Vec<u8>>> {
+            Ok(self.0.clone())
+        }
+    }
+
+    fn artifact_for(local_wasm: &[u8]) -> VerificationResult {
+        VerificationResult {
+            status: VerificationStatus::Mismatch,
+            contract_id: "C...".to_string(),
+            network: "testnet".to_string(),
+            local_wasm_hash: observatory_wasm::artifact_fingerprint(local_wasm),
+            deployed_wasm_hash: Some("00".repeat(32)),
+            detail: String::new(),
+        }
+    }
+
+    #[test]
+    fn injected_source_reports_matching_interfaces() {
+        let wasm = module_with_spec(&[spec_function("hello", &[], Some(ScSpecTypeDef::Bool))]);
+        let result = verify_interface_with_source(
+            &wasm,
+            artifact_for(&wasm),
+            &MockSource(Some(wasm.clone())),
+        )
+        .unwrap();
+        assert_eq!(result.interface_match, Some(true));
+        assert!(result.diff.as_ref().unwrap().changes.is_empty());
+        assert_eq!(
+            result.compatibility.as_ref().unwrap().status,
+            observatory_compat::CompatibilityStatus::Compatible
+        );
+        assert_eq!(result.source_verification, "not_performed");
+    }
+
+    #[test]
+    fn injected_source_reports_interface_differences_and_compatibility() {
+        let local = module_with_spec(&[spec_function("hello", &[], Some(ScSpecTypeDef::Bool))]);
+        let deployed = module_with_spec(&[spec_function(
+            "goodbye",
+            &[("value", ScSpecTypeDef::U32)],
+            Some(ScSpecTypeDef::Bool),
+        )]);
+        let result =
+            verify_interface_with_source(&local, artifact_for(&local), &MockSource(Some(deployed)))
+                .unwrap();
+        assert_eq!(result.interface_match, Some(false));
+        assert!(!result.diff.as_ref().unwrap().changes.is_empty());
+        assert_eq!(
+            result.compatibility.as_ref().unwrap().status,
+            observatory_compat::CompatibilityStatus::Incompatible
+        );
+        assert_eq!(result.source_verification, "not_performed");
+    }
+
+    #[test]
+    fn injected_source_reports_missing_deployed_code() {
+        let local = module_with_spec(&[spec_function("hello", &[], Some(ScSpecTypeDef::Bool))]);
+        let result =
+            verify_interface_with_source(&local, artifact_for(&local), &MockSource(None)).unwrap();
+        assert_eq!(result.interface_match, None);
+        assert!(result.diff.is_none());
+        assert!(result.compatibility.is_none());
+        assert!(result.detail.contains("could not be fetched"));
     }
 }

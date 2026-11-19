@@ -379,7 +379,11 @@ fn verify_interface_reports_a_match_against_a_fixture() {
         ])
         .assert()
         .success()
-        .stdout(predicate::str::contains("\"interface_match\": true"));
+        .stdout(predicate::str::contains("\"interface_match\": true"))
+        .stdout(predicate::str::contains(
+            "\"source_verification\": \"not_performed\"",
+        ))
+        .stdout(predicate::str::contains("\"compatibility\""));
 }
 
 fn metadata_module() -> Vec<u8> {

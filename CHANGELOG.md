@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Verification: `verify interface` reports the interface diff and strict
+  compatibility verdict alongside `interface_match`, keeps artifact identity
+  separate, and exposes an injectable `DeployedCodeSource`. Live fetching
+  remains blocked on #14. See `docs/verification.md`.
 - CLI: `repro <WASM> [--reference <WASM>]` reports `contractenvmetav0` and
   `contractmetav0` plus comparison state, and always states that source
   reproduction was not performed. See `docs/reproducibility.md`.
