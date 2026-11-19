@@ -12,6 +12,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Events: accept raw base64 `ContractEvent` XDR, either as a bare input or an
   `xdr` field on a fixture entry, and normalize it to the existing `EventRecord`
   shape. See `docs/events.md`.
+- CLI: `completions <shell>` generates bash, zsh, fish, and PowerShell completion
+  scripts. See `docs/cli.md`.
+- CI: reusable composite action at `.github/actions/observatory` that installs
+  the CLI and runs `inspect`, `diff`, or `compat` with a JSON report. See
+  `docs/ci.md`.
+
+### Changed
+
+- CLI: an unsupported `--config` file extension is an unsupported-feature error
+  (exit code `5`), not a usage error (`2`).
 
 ## [0.1.0] - 2026-10-28
 
