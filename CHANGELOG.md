@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Diff: `function_renamed` pairs one removal with one addition only when their
+  signatures match exactly and the pairing is unambiguous. Parameterless
+  functions are never paired. See `docs/interface-diff.md`.
 - Verification: `verify interface` reports the interface diff and strict
   compatibility verdict alongside `interface_match`, keeps artifact identity
   separate, and exposes an injectable `DeployedCodeSource`. Live fetching

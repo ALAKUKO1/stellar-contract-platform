@@ -52,6 +52,11 @@ example, two removed functions with the same signature and one addition), the
 diff does **not** guess; it reports the removals and addition separately. A
 rename is breaking by default because callers use names.
 
+This is a confidence rule, not proof of intent. The matching signature is what
+raises confidence; the change detail marks the pairing as heuristic so readers
+can check the old and new renderings. A removal and addition with different
+signatures always stay separate.
+
 ## What it does not do
 
 - It does not decide compatibility. Use `compat`.

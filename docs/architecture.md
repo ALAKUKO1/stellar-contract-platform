@@ -108,7 +108,7 @@ and its test suite.
 | Contract metadata | Implemented | `observatory-verify` parses `contractmetav0`/`contractenvmetav0` | typed key model (#18) |
 | Contract spec parsing | Implemented | `observatory-spec`, 9 tests | forward-compat entry kinds (#6) |
 | Interface model | Implemented | `observatory-interface`, 7 tests | JSON schema (#34) |
-| Interface diff | Implemented | `observatory-diff`, 6 tests | rename detection (#8), Markdown (#9) |
+| Interface diff | Implemented | `observatory-diff` incl. rename detection and Markdown | — |
 | Compatibility | Implemented | `observatory-compat`, 7 tests | policy file (#12) |
 | Events | Implemented | `observatory-events`, 7 tests | raw XDR (#10), RPC (#36) |
 | RPC abstraction | Implemented (mock/fixture) | `observatory-rpc`, 6 tests | live HTTPS transport (#13) |
