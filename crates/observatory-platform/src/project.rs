@@ -159,7 +159,7 @@ impl ConfigFormat {
             Some("yml") | Some("yaml") => Ok(ConfigFormat::Yaml),
             Some("toml") => Ok(ConfigFormat::Toml),
             Some("json") => Ok(ConfigFormat::Json),
-            other => Err(ObservatoryError::invalid(format!(
+            other => Err(ObservatoryError::unsupported(format!(
                 "unsupported configuration extension `{}`; expected yml, yaml, toml, or json",
                 other.unwrap_or("<none>")
             ))),

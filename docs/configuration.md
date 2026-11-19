@@ -79,7 +79,7 @@ window_secs = 30
 
 - Unknown top-level or nested fields are errors.
 - An unknown `analysis.compatibility.policy` is an error.
-- An unsupported file extension is an error.
+- An unsupported file extension is an unsupported-feature error (exit code `5`).
 
 ## Not included
 

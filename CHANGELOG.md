@@ -15,6 +15,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - CLI: `completions <shell>` generates bash, zsh, fish, and PowerShell completion
   scripts. See `docs/cli.md`.
 
+### Changed
+
+- CLI: an unsupported `--config` file extension is an unsupported-feature error
+  (exit code `5`), not a usage error (`2`).
+
 ## [0.1.0] - 2026-10-28
 
 First tagged release. Linux x86_64, macOS arm64, and Windows x86_64 archives

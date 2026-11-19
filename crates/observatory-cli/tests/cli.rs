@@ -250,6 +250,111 @@ fn code_xdr(wasm: &[u8], hash: [u8; 32]) -> String {
     data.to_xdr_base64(Limits::none()).unwrap()
 }
 
+fn instance_fixture(hash: [u8; 32]) -> String {
+    format!(
+        r#"{{"getLedgerEntries":{{"__sequence":[{{"entries":[{{"key":"","xdr":"{}"}}]}}]}}}}"#,
+        instance_xdr(hash)
+    )
+}
+
+const EMPTY_LEDGER_ENTRIES_FIXTURE: &str =
+    r#"{"getLedgerEntries":{"__sequence":[{"entries":[]}]}}"#;
+
+fn verify_artifact_args<'a>(wasm: &'a str, contract: &'a str, fixture: &'a str) -> [&'a str; 7] {
+    [
+        "verify",
+        "artifact",
+        wasm,
+        "--contract",
+        contract,
+        "--rpc-fixture",
+        fixture,
+    ]
+}
+
+#[test]
+fn unsupported_configuration_extension_exits_5() {
+    let config = write_temp(b"project: {}\n", ".txt");
+    let config = config.path().to_str().unwrap();
+    binary()
+        .args(["inspect", "unused.wasm", "--config", config, "--json"])
+        .assert()
+        .code(5)
+        .stdout(predicate::str::contains("\"kind\":\"error\""))
+        .stdout(predicate::str::contains("\"code\":\"unsupported\""));
+
+    binary()
+        .args(["inspect", "unused.wasm", "--config", config])
+        .assert()
+        .code(5)
+        .stderr(predicate::str::contains("error: unsupported:"))
+        .stderr(predicate::str::contains(
+            "unsupported configuration extension",
+        ));
+}
+
+#[test]
+fn verify_artifact_mismatch_exits_7() {
+    let wasm = module_with_spec(&[spec_function("hello", &[], Some(ScSpecTypeDef::Bool))]);
+    let wasm_file = write_temp(&wasm, ".wasm");
+    let contract_id = format!("{}", stellar_strkey::Contract([9u8; 32]));
+    let fixture = instance_fixture([7u8; 32]);
+    let fixture_file = write_temp(fixture.as_bytes(), ".json");
+    let args = verify_artifact_args(
+        wasm_file.path().to_str().unwrap(),
+        &contract_id,
+        fixture_file.path().to_str().unwrap(),
+    );
+
+    binary()
+        .args(args)
+        .arg("--json")
+        .assert()
+        .code(7)
+        .stdout(predicate::str::contains("\"kind\": \"verify\""))
+        .stdout(predicate::str::contains("\"status\": \"MISMATCH\""))
+        .stdout(predicate::str::contains("\"deployed_wasm_hash\""));
+
+    binary()
+        .args(args)
+        .assert()
+        .code(7)
+        .stdout(predicate::str::contains("status: Mismatch"))
+        .stdout(predicate::str::contains("deployed_wasm_hash:"));
+}
+
+#[test]
+fn verify_artifact_inconclusive_exits_8() {
+    let wasm = module_with_spec(&[spec_function("hello", &[], Some(ScSpecTypeDef::Bool))]);
+    let wasm_file = write_temp(&wasm, ".wasm");
+    let contract_id = format!("{}", stellar_strkey::Contract([9u8; 32]));
+    let fixture_file = write_temp(EMPTY_LEDGER_ENTRIES_FIXTURE.as_bytes(), ".json");
+    let args = verify_artifact_args(
+        wasm_file.path().to_str().unwrap(),
+        &contract_id,
+        fixture_file.path().to_str().unwrap(),
+    );
+
+    binary()
+        .args(args)
+        .arg("--json")
+        .assert()
+        .code(8)
+        .stdout(predicate::str::contains("\"kind\": \"verify\""))
+        .stdout(predicate::str::contains(
+            "\"status\": \"INSUFFICIENT_DATA\"",
+        ));
+
+    binary()
+        .args(args)
+        .assert()
+        .code(8)
+        .stdout(predicate::str::contains("status: InsufficientData"))
+        .stdout(predicate::str::contains(
+            "no contract instance entry was returned",
+        ));
+}
+
 #[test]
 fn verify_interface_reports_a_match_against_a_fixture() {
     let wasm = module_with_spec(&[spec_function("hello", &[], Some(ScSpecTypeDef::Bool))]);
