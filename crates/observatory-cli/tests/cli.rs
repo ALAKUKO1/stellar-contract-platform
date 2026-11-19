@@ -136,6 +136,18 @@ fn events_filters_fixture() {
 }
 
 #[test]
+fn completions_emit_non_empty_scripts() {
+    for shell in ["bash", "zsh", "fish", "powershell"] {
+        binary()
+            .args(["completions", shell])
+            .assert()
+            .success()
+            .stdout(predicate::str::is_empty().not())
+            .stdout(predicate::str::contains("stellar-contract-platform"));
+    }
+}
+
+#[test]
 fn doctor_reports_capabilities() {
     binary()
         .args(["doctor", "--json"])

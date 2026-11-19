@@ -13,7 +13,8 @@
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
-use clap::{Parser, Subcommand};
+use clap::{CommandFactory, Parser, Subcommand};
+use clap_complete::Shell;
 use observatory_compat::{assess, CompatibilityStatus};
 use observatory_core::{
     ExitCode as ObservatoryExit, Network, ObservatoryError, OutputFormat, Result,
@@ -131,6 +132,12 @@ enum Command {
     Api(ApiCommand),
     /// Report environment and capabilities.
     Doctor,
+    /// Generate a shell completion script.
+    Completions {
+        /// Shell to generate completions for.
+        #[arg(value_enum)]
+        shell: Shell,
+    },
 }
 
 #[derive(Debug, Subcommand)]
@@ -248,6 +255,7 @@ fn command_name(command: &Command) -> &'static str {
         Command::Verify(_) => "verify",
         Command::Api(_) => "api",
         Command::Doctor => "doctor",
+        Command::Completions { .. } => "completions",
     }
 }
 
@@ -562,6 +570,12 @@ fn run(cli: &Cli, format: OutputFormat) -> Result<ObservatoryExit> {
                 println!("{} {}", payload["tool"], payload["version"]);
                 println!("rpc transport: {}", payload["rpc_transport"]);
             })?;
+            Ok(ObservatoryExit::Success)
+        }
+        Command::Completions { shell } => {
+            let mut command = Cli::command();
+            let name = command.get_name().to_string();
+            clap_complete::generate(*shell, &mut command, name, &mut std::io::stdout());
             Ok(ObservatoryExit::Success)
         }
     }

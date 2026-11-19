@@ -67,6 +67,26 @@ Parse and compare build metadata JSON documents.
 
 Prints capabilities, schema version, networks, and the RPC transport status.
 
+### `completions <SHELL>`
+
+Prints a completion script for `bash`, `zsh`, `fish`, or `powershell` to stdout.
+
+```bash
+# bash
+stellar-contract-platform completions bash \
+  > ~/.local/share/bash-completion/completions/stellar-contract-platform
+
+# zsh (a directory on $fpath)
+stellar-contract-platform completions zsh > "${fpath[1]}/_stellar-contract-platform"
+
+# fish
+stellar-contract-platform completions fish \
+  > ~/.config/fish/completions/stellar-contract-platform.fish
+
+# PowerShell (add the generated script to your profile, then restart the shell)
+stellar-contract-platform completions powershell | Out-File -Encoding utf8 $PROFILE
+```
+
 ## Exit codes
 
 | Code | Meaning |
