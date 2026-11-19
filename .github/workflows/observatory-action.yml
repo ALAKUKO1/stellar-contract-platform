@@ -1,0 +1,71 @@
+name: Observatory Action
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  action:
+    name: Exercise the reusable action
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
+
+      - name: Inspect
+        uses: ./.github/actions/observatory
+        with:
+          command: inspect
+          wasm: demo/fixtures/new.wasm
+          security: "true"
+          path: crates/observatory-cli
+          report: observatory-inspect.json
+
+      - name: Diff
+        uses: ./.github/actions/observatory
+        with:
+          command: diff
+          baseline: demo/fixtures/old.wasm
+          wasm: demo/fixtures/new.wasm
+          path: crates/observatory-cli
+          report: observatory-diff.json
+
+      - name: Compat (identical artifacts)
+        uses: ./.github/actions/observatory
+        with:
+          command: compat
+          baseline: demo/fixtures/old.wasm
+          wasm: demo/fixtures/old.wasm
+          path: crates/observatory-cli
+          report: observatory-compat.json
+
+      - name: Compat (expected breaking change)
+        id: compat
+        continue-on-error: true
+        uses: ./.github/actions/observatory
+        with:
+          command: compat
+          baseline: demo/fixtures/old.wasm
+          wasm: demo/fixtures/new.wasm
+          path: crates/observatory-cli
+          report: observatory-compat-breaking.json
+
+      - name: Assert incompatible exit code
+        shell: bash
+        run: |
+          test "${{ steps.compat.outputs.exit-code }}" = "6"
+
+      - name: Upload reports
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: observatory-reports
+          path: observatory-*.json
+          if-no-files-found: error
+          retention-days: 7

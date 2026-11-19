@@ -66,6 +66,52 @@ Automation should pin `schema_version` and treat unknown `kind` values as errors
 
 ## GitHub Action
 
-A reusable Action and an `observatory.yml` configuration schema are **not**
-implemented yet; they are tracked as future work. Until then, invoke the binary
-directly as shown above.
+The composite action lives at `.github/actions/observatory`. It installs the CLI
+and runs `inspect`, `diff`, or `compat`, writing a JSON report. It is a
+deterministic analysis helper, not a security audit or certification.
+
+| Input | Default | Meaning |
+| ----- | ------- | ------- |
+| `command` | `inspect` | `inspect`, `diff`, or `compat`. |
+| `wasm` | required | Artifact to inspect, or the updated artifact for `diff`/`compat`. |
+| `baseline` | empty | Baseline artifact; required for `diff` and `compat`. |
+| `report` | `observatory-report.json` | Path for the JSON report. |
+| `security` | `false` | Pass `--security` to `inspect`. |
+| `repository` | `Tech-Cred/stellar-contract-platform` | Repository to install the CLI from. |
+| `ref` | `main` | Git ref, tag, or commit to install. |
+| `path` | empty | Local `observatory-cli` crate path; skips the git install. |
+
+Outputs: `exit-code` (the CLI exit code) and `report` (the written path). A Rust
+toolchain is required; add `dtolnay/rust-toolchain` before the action.
+
+```yaml
+name: Contract checks
+on: pull_request
+jobs:
+  observatory:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Inspect the artifact
+        uses: Tech-Cred/stellar-contract-platform/.github/actions/observatory@main
+        with:
+          command: inspect
+          wasm: contract.wasm
+          security: "true"
+          report: observatory-inspect.json
+      - name: Compare against the baseline
+        uses: Tech-Cred/stellar-contract-platform/.github/actions/observatory@main
+        with:
+          command: compat
+          baseline: baseline.wasm
+          wasm: contract.wasm
+          report: observatory-compat.json
+```
+
+`compat` exits `6` for an incompatible change, so the step fails the job. Use
+`continue-on-error: true` on that step when the report is advisory, or inspect
+`steps.<id>.outputs.exit-code` to gate explicitly.
+
+The repository workflow `.github/workflows/observatory-action.yml` exercises all
+three commands against the demo fixtures.

@@ -14,6 +14,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   shape. See `docs/events.md`.
 - CLI: `completions <shell>` generates bash, zsh, fish, and PowerShell completion
   scripts. See `docs/cli.md`.
+- CI: reusable composite action at `.github/actions/observatory` that installs
+  the CLI and runs `inspect`, `diff`, or `compat` with a JSON report. See
+  `docs/ci.md`.
 
 ### Changed
 

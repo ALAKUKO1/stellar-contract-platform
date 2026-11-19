@@ -1,0 +1,112 @@
+name: Stellar Contract Observatory
+description: Inspect, diff, or assess compatibility of Soroban contract artifacts. Not a security audit or certification.
+
+inputs:
+  command:
+    description: "Operation to run: inspect, diff, or compat."
+    required: false
+    default: inspect
+  wasm:
+    description: Path to the artifact to inspect, or the updated artifact for diff/compat.
+    required: true
+  baseline:
+    description: Baseline artifact path. Required for diff and compat.
+    required: false
+    default: ""
+  report:
+    description: Path for the JSON report. The parent directory must exist.
+    required: false
+    default: observatory-report.json
+  security:
+    description: Run the bounded interface/artifact heuristics during inspect.
+    required: false
+    default: "false"
+  repository:
+    description: Repository to install the CLI from when path is empty.
+    required: false
+    default: Tech-Cred/stellar-contract-platform
+  ref:
+    description: Git ref, tag, or commit to install from when path is empty.
+    required: false
+    default: main
+  path:
+    description: Local path to the observatory-cli crate. Skips the git install when set.
+    required: false
+    default: ""
+
+outputs:
+  exit-code:
+    description: The CLI process exit code.
+    value: ${{ steps.run.outputs.exit-code }}
+  report:
+    description: Path to the JSON report that was written.
+    value: ${{ steps.run.outputs.report }}
+
+runs:
+  using: composite
+  steps:
+    - name: Install CLI
+      shell: bash
+      env:
+        INPUT_PATH: ${{ inputs.path }}
+        INPUT_REPOSITORY: ${{ inputs.repository }}
+        INPUT_REF: ${{ inputs.ref }}
+      run: |
+        set -euo pipefail
+        if command -v stellar-contract-platform >/dev/null 2>&1; then
+          echo "stellar-contract-platform is already installed"
+          exit 0
+        fi
+        if [ -n "$INPUT_PATH" ]; then
+          cargo install --path "$INPUT_PATH" --locked --force observatory-cli
+        else
+          cargo install --git "$INPUT_REPOSITORY" --rev "$INPUT_REF" --locked --force observatory-cli
+        fi
+
+    - name: Run Observatory
+      id: run
+      shell: bash
+      env:
+        INPUT_COMMAND: ${{ inputs.command }}
+        INPUT_WASM: ${{ inputs.wasm }}
+        INPUT_BASELINE: ${{ inputs.baseline }}
+        INPUT_REPORT: ${{ inputs.report }}
+        INPUT_SECURITY: ${{ inputs.security }}
+      run: |
+        set -uo pipefail
+        report="${INPUT_REPORT:-observatory-report.json}"
+        case "$INPUT_COMMAND" in
+          inspect)
+            args=(inspect "$INPUT_WASM" --json)
+            if [ "$INPUT_SECURITY" = "true" ]; then
+              args+=(--security)
+            fi
+            ;;
+          diff)
+            if [ -z "$INPUT_BASELINE" ]; then
+              echo "::error::baseline is required for diff"
+              exit 2
+            fi
+            args=(diff "$INPUT_BASELINE" "$INPUT_WASM" --json)
+            ;;
+          compat)
+            if [ -z "$INPUT_BASELINE" ]; then
+              echo "::error::baseline is required for compat"
+              exit 2
+            fi
+            args=(compat "$INPUT_BASELINE" "$INPUT_WASM" --json)
+            ;;
+          *)
+            echo "::error::unsupported command '$INPUT_COMMAND'; expected inspect, diff, or compat"
+            exit 2
+            ;;
+        esac
+
+        set +e
+        stellar-contract-platform "${args[@]}" > "$report"
+        code=$?
+        set -e
+        cat "$report"
+        echo "exit-code=$code" >> "$GITHUB_OUTPUT"
+        echo "report=$report" >> "$GITHUB_OUTPUT"
+        exit "$code"
