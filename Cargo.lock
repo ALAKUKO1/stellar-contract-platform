@@ -759,6 +759,7 @@ dependencies = [
  "observatory-wasm",
  "serde",
  "stellar-xdr",
+ "wat",
 ]
 
 [[package]]

@@ -282,12 +282,83 @@ fn references_unknown(interface: &ContractInterface, ty: &SpecType) -> bool {
 mod tests {
     use super::*;
     use observatory_spec::normalize;
-    use observatory_testutil::spec::{spec_function, spec_struct, ty_udt};
-    use observatory_testutil::{minimal_module, module_with_spec};
-    use stellar_xdr::{ScSpecEntry, ScSpecTypeDef};
+    use observatory_testutil::spec::{
+        spec_enum, spec_error_enum, spec_event, spec_function, spec_struct, spec_union, ty_udt,
+    };
+    use observatory_testutil::{
+        custom_section, encode_spec_entries, minimal_module, module_with_spec,
+        CONTRACT_SPEC_SECTION,
+    };
+    use stellar_xdr::{ScSpecEntry, ScSpecEventParamLocationV0, ScSpecTypeDef};
 
     fn interface(entries: Vec<ScSpecEntry>) -> ContractInterface {
         ContractInterface::from_spec(normalize(entries))
+    }
+
+    /// Well-formed interfaces that must stay free of audit findings.
+    fn interface_corpus() -> Vec<(&'static str, Vec<ScSpecEntry>)> {
+        vec![
+            (
+                "token",
+                vec![
+                    spec_function(
+                        "transfer",
+                        &[("to", ty_udt("Recipient")), ("amount", ScSpecTypeDef::I128)],
+                        Some(ScSpecTypeDef::Bool),
+                    ),
+                    spec_function(
+                        "balance",
+                        &[("owner", ScSpecTypeDef::Address)],
+                        Some(ScSpecTypeDef::I128),
+                    ),
+                    spec_struct("Recipient", &[("address", ScSpecTypeDef::Address)]),
+                    spec_enum("Status", &[("Active", 0), ("Frozen", 1)]),
+                    spec_union(
+                        "Change",
+                        &[("None", None), ("Amount", Some(vec![ScSpecTypeDef::I128]))],
+                    ),
+                    spec_error_enum("Error", &[("NotAuthorized", 1)]),
+                    spec_event(
+                        "Transfer",
+                        &["transfer"],
+                        &[(
+                            "amount",
+                            ScSpecTypeDef::I128,
+                            ScSpecEventParamLocationV0::Data,
+                        )],
+                    ),
+                ],
+            ),
+            (
+                "greeting",
+                vec![
+                    spec_function(
+                        "hello",
+                        &[("name", ScSpecTypeDef::String)],
+                        Some(ScSpecTypeDef::Symbol),
+                    ),
+                    spec_struct("Greeting", &[("name", ScSpecTypeDef::String)]),
+                ],
+            ),
+            (
+                "counter",
+                vec![
+                    spec_function("increment", &[], None),
+                    spec_function("get", &[], Some(ScSpecTypeDef::U32)),
+                ],
+            ),
+        ]
+    }
+
+    /// A valid module with a code section, linear memory, and a contract spec.
+    fn module_with_code_and_spec(entries: &[ScSpecEntry]) -> Vec<u8> {
+        let mut module =
+            wat::parse_str(r#"(module (memory 1) (func (export "hello")))"#).expect("valid wat");
+        module.extend(custom_section(
+            CONTRACT_SPEC_SECTION,
+            &encode_spec_entries(entries),
+        ));
+        module
     }
 
     #[test]
@@ -340,6 +411,28 @@ mod tests {
             .findings
             .iter()
             .any(|f| f.id == "artifact.no-contract-spec"));
+    }
+
+    #[test]
+    fn false_positive_corpus_is_clean() {
+        for (name, entries) in interface_corpus() {
+            let report = audit_interface(&interface(entries));
+            assert!(
+                report.status == AuditStatus::Pass && report.findings.is_empty(),
+                "false positive in interface fixture `{name}`: {:?}",
+                report.findings
+            );
+        }
+        for (name, entries) in interface_corpus() {
+            let wasm = module_with_code_and_spec(&entries);
+            let inspected = observatory_wasm::inspect(&wasm).unwrap();
+            let report = audit_artifact(&inspected);
+            assert!(
+                report.status == AuditStatus::Pass && report.findings.is_empty(),
+                "false positive in artifact fixture `{name}`: {:?}",
+                report.findings
+            );
+        }
     }
 
     #[test]
