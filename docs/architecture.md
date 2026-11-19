@@ -45,7 +45,7 @@ ones. The CLI is the only crate that composes the whole graph.
 | `observatory-compat` | compatibility policy and verdicts | core, diff, interface, spec |
 | `observatory-rpc` | transport abstraction, typed models, mock/fixture transport | core |
 | `observatory-deployment` | deployed contract inspection, WASM hash recovery | core, rpc |
-| `observatory-verify` | verification verdicts and build metadata | core, deployment, rpc, wasm |
+| `observatory-verify` | verification verdicts, interface comparison, build metadata | core, compat, deployment, diff, interface, rpc, wasm |
 | `observatory-audit` | bounded heuristics | core, interface, spec, wasm |
 | `observatory-output` | report envelopes, JSON rendering | core |
 | `observatory-cli` | command-line interface | all of the above |
@@ -108,7 +108,7 @@ and its test suite.
 | Contract metadata | Implemented | `observatory-verify` parses `contractmetav0`/`contractenvmetav0` | typed key model (#18) |
 | Contract spec parsing | Implemented | `observatory-spec`, 9 tests | forward-compat entry kinds (#6) |
 | Interface model | Implemented | `observatory-interface`, 7 tests | JSON schema (#34) |
-| Interface diff | Implemented | `observatory-diff`, 6 tests | rename detection (#8), Markdown (#9) |
+| Interface diff | Implemented | `observatory-diff` incl. rename detection and Markdown | — |
 | Compatibility | Implemented | `observatory-compat`, 7 tests | policy file (#12) |
 | Events | Implemented | `observatory-events`, 7 tests | raw XDR (#10), RPC (#36) |
 | RPC abstraction | Implemented (mock/fixture) | `observatory-rpc`, 6 tests | live HTTPS transport (#13) |

@@ -127,6 +127,14 @@ enum Command {
     /// Verify a local artifact against a deployment, or compare build metadata.
     #[command(subcommand)]
     Verify(VerifyCommand),
+    /// Report embedded environment and build metadata for reproducibility.
+    Repro {
+        /// Path to a `.wasm` file.
+        wasm: PathBuf,
+        /// Reference artifact to compare embedded metadata against.
+        #[arg(long)]
+        reference: Option<PathBuf>,
+    },
     /// Run the REST API server or print its OpenAPI document.
     #[command(subcommand)]
     Api(ApiCommand),
@@ -253,6 +261,7 @@ fn command_name(command: &Command) -> &'static str {
         Command::Fingerprint { .. } => "fingerprint",
         Command::Deployment(_) => "deployment",
         Command::Verify(_) => "verify",
+        Command::Repro { .. } => "repro",
         Command::Api(_) => "api",
         Command::Doctor => "doctor",
         Command::Completions { .. } => "completions",
@@ -498,6 +507,19 @@ fn run(cli: &Cli, format: OutputFormat) -> Result<ObservatoryExit> {
             })?;
             Ok(ObservatoryExit::Success)
         }
+        Command::Repro { wasm, reference } => {
+            let bytes = observatory_wasm::load_file(wasm)?;
+            let reference_bytes = reference
+                .as_ref()
+                .map(|path| observatory_wasm::load_file(path))
+                .transpose()?;
+            let report =
+                observatory_verify::reproducibility_report(&bytes, reference_bytes.as_deref())?;
+            emit(format, "repro", &report, || {
+                print_reproducibility(&report);
+            })?;
+            Ok(ObservatoryExit::Success)
+        }
         Command::Api(ApiCommand::Openapi) => {
             let document = observatory_api::openapi::document();
             let json = serde_json::to_string_pretty(&document)
@@ -561,7 +583,7 @@ fn run(cli: &Cli, format: OutputFormat) -> Result<ObservatoryExit> {
                 "schema_version": observatory_core::SCHEMA_VERSION,
                 "capabilities": [
                     "inspect", "spec", "events", "diff", "compat",
-                    "fingerprint", "deployment", "verify", "doctor"
+                    "fingerprint", "deployment", "verify", "repro", "doctor"
                 ],
                 "rpc_transport": "fixture/mock only (no live HTTP transport yet)",
                 "networks": networks,
@@ -796,6 +818,41 @@ fn print_interface_verification(result: &observatory_verify::InterfaceVerificati
         println!("deployed_interface_sha256: {deployed}");
     }
     println!("artifact: {:?}", result.artifact.status);
+    println!("source_verification: {}", result.source_verification);
+    if let Some(diff) = &result.diff {
+        print_diff(diff);
+    }
+    if let Some(compatibility) = &result.compatibility {
+        print_compat(compatibility);
+    }
+}
+
+fn print_reproducibility(report: &observatory_verify::ReproducibilityReport) {
+    match &report.env_meta {
+        Some(meta) => println!(
+            "environment: protocol {}, pre-release {}",
+            meta.protocol, meta.pre_release
+        ),
+        None => println!("environment: <none>"),
+    }
+    match &report.build_metadata {
+        Some(metadata) if !metadata.entries.is_empty() => {
+            println!("build metadata:");
+            for (key, value) in &metadata.entries {
+                println!("  {key} = {value}");
+            }
+        }
+        _ => println!("build metadata: <none>"),
+    }
+    let state = match report.comparison.state {
+        observatory_verify::MetadataComparisonState::NotCompared => "not_compared",
+        observatory_verify::MetadataComparisonState::Match => "match",
+        observatory_verify::MetadataComparisonState::Mismatch => "mismatch",
+    };
+    println!("comparison: {state}");
+    println!("{}", report.comparison.detail);
+    println!("source_reproduction: {}", report.source_reproduction);
+    println!("note: source reproduction was not performed");
 }
 
 fn print_verification(result: &observatory_verify::VerificationResult) {

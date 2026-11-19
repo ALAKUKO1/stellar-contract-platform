@@ -35,10 +35,22 @@ the interface of the deployed contract code (fetched by hash). It reports
 `interface_match` as `true`, `false`, or `null` when unknown (the local artifact
 has no specification, or the deployed code could not be fetched or parsed).
 
+When both interfaces are known, the report also includes:
+
+- `diff` — the interface diff with the local interface as the baseline,
+- `compatibility` — the strict compatibility verdict for the deployed interface
+  relative to the local one.
+
 Artifact identity and interface identity are always reported separately: the
 artifact status is the hash comparison, while `interface_match` is the interface
-comparison. Exit codes: `0` when the interfaces match, `7` when they differ, `8`
-when unknown.
+comparison. `source_verification` is always `not_performed`; an interface match
+is not source verification. Exit codes: `0` when the interfaces match, `7` when
+they differ, `8` when unknown.
+
+The comparison is transport-independent: `verify_interface_with_source` accepts
+a `DeployedCodeSource`, which tests use to inject match, mismatch, and missing
+code. Live fetching remains blocked on issue #14; the shipped CLI reads deployed
+code only through deterministic RPC fixtures.
 
 ```bash
 stellar-contract-platform verify interface contract.wasm \

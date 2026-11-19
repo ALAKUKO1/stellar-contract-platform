@@ -379,7 +379,59 @@ fn verify_interface_reports_a_match_against_a_fixture() {
         ])
         .assert()
         .success()
-        .stdout(predicate::str::contains("\"interface_match\": true"));
+        .stdout(predicate::str::contains("\"interface_match\": true"))
+        .stdout(predicate::str::contains(
+            "\"source_verification\": \"not_performed\"",
+        ))
+        .stdout(predicate::str::contains("\"compatibility\""));
+}
+
+fn metadata_module() -> Vec<u8> {
+    use stellar_xdr::{
+        Limits, ScEnvMetaEntry, ScEnvMetaEntryInterfaceVersion, ScMetaEntry, ScMetaV0, WriteXdr,
+    };
+    let mut module = module_with_spec(&[spec_function("hello", &[], Some(ScSpecTypeDef::Bool))]);
+    let env = ScEnvMetaEntry::ScEnvMetaKindInterfaceVersion(ScEnvMetaEntryInterfaceVersion {
+        protocol: 22,
+        pre_release: 0,
+    });
+    module.extend(observatory_testutil::custom_section(
+        observatory_wasm::CONTRACT_ENV_META_SECTION,
+        &env.to_xdr(Limits::none()).unwrap(),
+    ));
+    let metadata = ScMetaEntry::ScMetaV0(ScMetaV0 {
+        key: "rsver".try_into().unwrap(),
+        val: "1.85.0".try_into().unwrap(),
+    });
+    module.extend(observatory_testutil::custom_section(
+        observatory_wasm::CONTRACT_META_SECTION,
+        &metadata.to_xdr(Limits::none()).unwrap(),
+    ));
+    module
+}
+
+#[test]
+fn repro_reports_metadata_without_claiming_source_reproduction() {
+    let wasm = metadata_module();
+    let file = write_temp(&wasm, ".wasm");
+    let path = file.path().to_str().unwrap();
+    binary()
+        .args(["repro", path, "--json"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("\"kind\": \"repro\""))
+        .stdout(predicate::str::contains("\"protocol\": 22"))
+        .stdout(predicate::str::contains("\"rsver\""))
+        .stdout(predicate::str::contains("\"state\": \"not_compared\""))
+        .stdout(predicate::str::contains(
+            "\"source_reproduction\": \"not_performed\"",
+        ));
+
+    binary()
+        .args(["repro", path, "--reference", path, "--json"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("\"state\": \"match\""));
 }
 
 #[test]

@@ -942,8 +942,10 @@ name = "observatory-verify"
 version = "0.1.0"
 dependencies = [
  "hex",
+ "observatory-compat",
  "observatory-core",
  "observatory-deployment",
+ "observatory-diff",
  "observatory-interface",
  "observatory-rpc",
  "observatory-testutil",

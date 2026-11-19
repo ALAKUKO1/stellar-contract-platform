@@ -21,6 +21,23 @@ response as untrusted input. The core guarantees:
 - artifact checks (no code section, no `contractspecv0`, truncated listings,
   oversized specification sections).
 
+### Duplicate entries and metadata consistency
+
+| Id | Severity | Experimental | Rationale |
+| -- | -------- | ------------ | --------- |
+| `interface.duplicate-function` | ERROR | no | Two functions with one name cannot both be called unambiguously. |
+| `interface.duplicate-type` | ERROR | no | A user-defined type name must resolve to a single definition. |
+| `interface.duplicate-event` | ERROR | no | Two events with one name cannot be told apart by consumers. |
+| `type.duplicate-field` | WARN | yes | Duplicate struct fields are almost certainly a code-generation bug, but the XDR encoding is still decodable. |
+| `type.duplicate-case` | WARN | yes | Duplicate union or enum case names break name-based matching; numeric encodings may still be distinct. |
+| `artifact.metadata-without-contract-spec` | WARN | yes | Soroban metadata with no `contractspecv0` section means the embedded build metadata does not describe an inspectable interface. Some toolchains may emit metadata before the spec. |
+| `artifact.metadata-without-code` | WARN | yes | Metadata claims a Soroban build but the module has no code section, so the artifact cannot be the built contract. |
+| `artifact.duplicate-metadata-section` | WARN | yes | More than one `contractmetav0`/`contractenvmetav0` section makes the effective metadata parser-dependent. |
+
+All rules read only the in-memory interface or `WasmReport`, use bounded
+iteration over already-parsed collections, and are deterministic. Duplicate
+checks report each duplicated name once.
+
 Rules marked `experimental` may change. Heuristic ids are stable for CI.
 
 > These checks are **not** a security audit and provide no guarantees. They catch

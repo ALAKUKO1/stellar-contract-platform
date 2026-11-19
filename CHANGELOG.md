@@ -9,6 +9,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Diff: `function_renamed` pairs one removal with one addition only when their
+  signatures match exactly and the pairing is unambiguous. Parameterless
+  functions are never paired. See `docs/interface-diff.md`.
+- Verification: `verify interface` reports the interface diff and strict
+  compatibility verdict alongside `interface_match`, keeps artifact identity
+  separate, and exposes an injectable `DeployedCodeSource`. Live fetching
+  remains blocked on #14. See `docs/verification.md`.
+- CLI: `repro <WASM> [--reference <WASM>]` reports `contractenvmetav0` and
+  `contractmetav0` plus comparison state, and always states that source
+  reproduction was not performed. See `docs/reproducibility.md`.
+- Audit: duplicate interface entry rules (`interface.duplicate-*`,
+  `type.duplicate-*`) and metadata/artifact consistency rules
+  (`artifact.metadata-without-*`, `artifact.duplicate-metadata-section`). See
+  `docs/security.md`.
 - Events: accept raw base64 `ContractEvent` XDR, either as a bare input or an
   `xdr` field on a fixture entry, and normalize it to the existing `EventRecord`
   shape. See `docs/events.md`.

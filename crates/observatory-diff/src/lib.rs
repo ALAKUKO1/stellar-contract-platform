@@ -11,6 +11,7 @@
 //! | ------ | ---------------- |
 //! | Function added | non-breaking |
 //! | Function removed | breaking |
+//! | Function renamed (identical signature) | breaking |
 //! | Function signature changed | breaking |
 //! | Function documentation only | informational |
 //! | Type added | non-breaking |
@@ -266,7 +267,7 @@ fn diff_functions(old: &ContractInterface, new: &ContractInterface, out: &mut Ve
             severity: Severity::Breaking,
             path: format!("function::{}", old_function.name),
             detail: format!(
-                "function `{}` was renamed to `{}` (identical signature)",
+                "function `{}` was renamed to `{}` (identical signature; heuristic pairing)",
                 old_function.name, new_function.name
             ),
             old: Some(render_function(old_function)),
@@ -686,6 +687,37 @@ mod tests {
         assert_eq!(result.changes[0].kind, ChangeKind::FunctionRenamed);
         assert_eq!(result.changes[0].severity, Severity::Breaking);
         assert!(result.changes[0].detail.contains("renamed"));
+        assert!(result.changes[0].detail.contains("heuristic"));
+    }
+
+    #[test]
+    fn identical_multi_parameter_signature_is_a_rename() {
+        let old = interface(vec![spec_function(
+            "swap",
+            &[("a", ScSpecTypeDef::I128), ("b", ScSpecTypeDef::Address)],
+            Some(ScSpecTypeDef::Bool),
+        )]);
+        let new = interface(vec![spec_function(
+            "exchange",
+            &[("a", ScSpecTypeDef::I128), ("b", ScSpecTypeDef::Address)],
+            Some(ScSpecTypeDef::Bool),
+        )]);
+        let result = diff(&old, &new);
+        assert_eq!(result.changes.len(), 1);
+        assert_eq!(result.changes[0].kind, ChangeKind::FunctionRenamed);
+    }
+
+    #[test]
+    fn zero_argument_pairs_are_not_guessed_as_renames() {
+        let old = interface(vec![spec_function("before", &[], None)]);
+        let new = interface(vec![spec_function("after", &[], None)]);
+        let result = diff(&old, &new);
+        assert!(!result
+            .changes
+            .iter()
+            .any(|change| change.kind == ChangeKind::FunctionRenamed));
+        assert_eq!(result.summary.breaking, 1);
+        assert_eq!(result.summary.non_breaking, 1);
     }
 
     #[test]
