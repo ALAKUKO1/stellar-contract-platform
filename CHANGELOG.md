@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Audit: duplicate interface entry rules (`interface.duplicate-*`,
+  `type.duplicate-*`) and metadata/artifact consistency rules
+  (`artifact.metadata-without-*`, `artifact.duplicate-metadata-section`). See
+  `docs/security.md`.
 - Events: accept raw base64 `ContractEvent` XDR, either as a bare input or an
   `xdr` field on a fixture entry, and normalize it to the existing `EventRecord`
   shape. See `docs/events.md`.
