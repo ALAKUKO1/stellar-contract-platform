@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- CLI: `repro <WASM> [--reference <WASM>]` reports `contractenvmetav0` and
+  `contractmetav0` plus comparison state, and always states that source
+  reproduction was not performed. See `docs/reproducibility.md`.
 - Audit: duplicate interface entry rules (`interface.duplicate-*`,
   `type.duplicate-*`) and metadata/artifact consistency rules
   (`artifact.metadata-without-*`, `artifact.duplicate-metadata-section`). See

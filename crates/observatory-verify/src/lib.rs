@@ -117,6 +117,106 @@ pub struct MetadataComparison {
     pub differences: Vec<MetadataDifference>,
 }
 
+/// Whether embedded metadata was compared against a reference artifact.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum MetadataComparisonState {
+    /// No reference artifact was supplied.
+    NotCompared,
+    /// Embedded environment and build metadata match the reference.
+    Match,
+    /// At least one embedded metadata value differs from the reference.
+    Mismatch,
+}
+
+/// The comparison portion of a reproducibility report.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct ReproducibilityComparison {
+    /// Comparison state.
+    pub state: MetadataComparisonState,
+    /// Whether `contractenvmetav0` matches, when a reference was supplied.
+    pub env_meta_equal: Option<bool>,
+    /// Build metadata comparison, when both artifacts carry it.
+    pub build_metadata: Option<MetadataComparison>,
+    /// Human-readable explanation.
+    pub detail: String,
+}
+
+/// What is known about a build artifact's reproducibility.
+///
+/// This report never claims source reproducibility: no build is performed.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct ReproducibilityReport {
+    /// Parsed `contractenvmetav0`, if present.
+    pub env_meta: Option<EnvMeta>,
+    /// Parsed `contractmetav0`, if present.
+    pub build_metadata: Option<BuildMetadata>,
+    /// Comparison against a reference artifact, if one was supplied.
+    pub comparison: ReproducibilityComparison,
+    /// Always `not_performed`; source is never rebuilt.
+    pub source_reproduction: String,
+}
+
+/// Build a reproducibility report from embedded metadata.
+///
+/// When `reference` is supplied, both artifacts' metadata is compared. The
+/// result describes metadata equality only, never source-level reproducibility.
+pub fn reproducibility_report(
+    wasm: &[u8],
+    reference: Option<&[u8]>,
+) -> Result<ReproducibilityReport> {
+    let env_meta = parse_env_meta(wasm)?;
+    let build_metadata = parse_build_metadata(wasm)?;
+
+    let comparison = match reference {
+        None => ReproducibilityComparison {
+            state: MetadataComparisonState::NotCompared,
+            env_meta_equal: None,
+            build_metadata: None,
+            detail: "no reference artifact supplied; metadata comparison was not performed"
+                .to_string(),
+        },
+        Some(reference) => {
+            let reference_env = parse_env_meta(reference)?;
+            let reference_build = parse_build_metadata(reference)?;
+            let env_meta_equal = env_meta == reference_env;
+            let (build_metadata, build_equal) = match (&build_metadata, &reference_build) {
+                (Some(left), Some(right)) => {
+                    let comparison = compare_build_metadata(left, right);
+                    let equal = comparison.equal;
+                    (Some(comparison), equal)
+                }
+                (None, None) => (None, true),
+                _ => (None, false),
+            };
+            let equal = env_meta_equal && build_equal;
+            ReproducibilityComparison {
+                state: if equal {
+                    MetadataComparisonState::Match
+                } else {
+                    MetadataComparisonState::Mismatch
+                },
+                env_meta_equal: Some(env_meta_equal),
+                build_metadata,
+                detail: if equal {
+                    "embedded environment and build metadata match the reference artifact"
+                        .to_string()
+                } else {
+                    "embedded environment or build metadata differs from the reference artifact"
+                        .to_string()
+                },
+            }
+        }
+    };
+
+    Ok(ReproducibilityReport {
+        env_meta,
+        build_metadata,
+        comparison,
+        source_reproduction: "not_performed".to_string(),
+    })
+}
+
 /// Compare two build metadata documents.
 #[must_use]
 pub fn compare_build_metadata(left: &BuildMetadata, right: &BuildMetadata) -> MetadataComparison {
@@ -387,6 +487,58 @@ mod tests {
         let same = compare_build_metadata(&a, &a);
         assert!(same.equal);
         assert!(same.differences.is_empty());
+    }
+
+    fn module_with_all_metadata() -> Vec<u8> {
+        let mut module = module_with_build_meta();
+        module.extend(
+            module_with_env_meta()
+                .into_iter()
+                .skip(minimal_module().len()),
+        );
+        module
+    }
+
+    #[test]
+    fn reproducibility_report_reports_without_claiming_source_reproduction() {
+        let wasm = module_with_all_metadata();
+        let report = reproducibility_report(&wasm, None).unwrap();
+        assert_eq!(report.env_meta.map(|meta| meta.protocol), Some(22));
+        assert_eq!(
+            report
+                .build_metadata
+                .as_ref()
+                .and_then(|metadata| metadata.get("rsver")),
+            Some("1.85.0")
+        );
+        assert_eq!(
+            report.comparison.state,
+            MetadataComparisonState::NotCompared
+        );
+        assert_eq!(report.source_reproduction, "not_performed");
+    }
+
+    #[test]
+    fn reproducibility_report_compares_a_reference_artifact() {
+        let wasm = module_with_all_metadata();
+        let matching = reproducibility_report(&wasm, Some(&wasm)).unwrap();
+        assert_eq!(matching.comparison.state, MetadataComparisonState::Match);
+        assert_eq!(matching.comparison.env_meta_equal, Some(true));
+        assert_eq!(
+            matching
+                .comparison
+                .build_metadata
+                .as_ref()
+                .map(|comparison| comparison.equal),
+            Some(true)
+        );
+
+        let differing = reproducibility_report(&wasm, Some(&minimal_module())).unwrap();
+        assert_eq!(
+            differing.comparison.state,
+            MetadataComparisonState::Mismatch
+        );
+        assert_eq!(differing.comparison.env_meta_equal, Some(false));
     }
 
     fn deployed_transport(hash_byte: u8) -> MockTransport {

@@ -63,6 +63,14 @@ Compares the local artifact hash against the deployed executable hash.
 
 Parse and compare build metadata JSON documents.
 
+### `repro <WASM> [--reference <WASM>]`
+
+Reports `contractenvmetav0` and `contractmetav0` contents. With `--reference`,
+also reports `match`/`mismatch` for the embedded metadata. The report always
+states `source_reproduction: not_performed`; the tool never rebuilds from source
+and never claims source reproducibility. See
+[reproducibility.md](reproducibility.md).
+
 ### `doctor`
 
 Prints capabilities, schema version, networks, and the RPC transport status.
