@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Fuzzing: a `cargo-fuzz` crate with a `spec_parse` target fuzzing
+  `observatory_spec::parse`, a valid seed corpus, and a scheduled nightly
+  workflow that uploads crashes. `fuzz/` is not a workspace member, so the
+  stable workspace gate does not need nightly. See `docs/testing.md`.
 - RPC: `observatory_rpc::HttpTransport` implements the live HTTPS transport
   behind the off-by-default `live` feature. It revalidates the endpoint and SSRF
   policy before every request, does not follow redirects, ignores environment

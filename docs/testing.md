@@ -34,6 +34,22 @@ cargo test --workspace
 | Event fixtures | `observatory-events` test helpers (base64 `ScVal`) |
 | Ledger entries | `stellar-xdr` `LedgerEntryData` encoded in tests |
 
+## Fuzzing
+
+`fuzz/` is a separate `cargo-fuzz` crate and is deliberately **not** a workspace
+member, so the stable workspace gate never needs nightly. The `spec_parse`
+target feeds arbitrary bytes to `observatory_spec::parse`. A small valid seed
+corpus lives in `fuzz/corpus/spec_parse/`.
+
+```bash
+cargo install cargo-fuzz
+rustup toolchain install nightly
+cargo fuzz run spec_parse
+```
+
+The scheduled `Fuzz smoke` workflow builds the target on nightly, runs it for 60
+seconds, and uploads any crashes under `fuzz/artifacts/spec_parse`.
+
 ## Coverage
 
 CI reports line coverage with [`cargo-llvm-cov`](https://github.com/taiki-e/cargo-llvm-cov),
