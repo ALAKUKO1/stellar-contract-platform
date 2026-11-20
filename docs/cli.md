@@ -37,9 +37,11 @@ Decodes an event fixture and filters it. `--limit` is applied last.
 Diff two contract interfaces. Changes are classified as breaking,
 non-breaking, or informational. Always exits `0`.
 
-### `compat <OLD> <NEW> [--policy strict|lenient]`
+### `compat <OLD> <NEW> [--policy strict|lenient] [--policy-file <FILE>]`
 
 Assess compatibility under a documented policy. Exits `6` when incompatible.
+`--policy-file` loads explicit rules from a `.yml`, `.yaml`, `.toml`, or `.json`
+document; see [compatibility.md](compatibility.md).
 
 ### `fingerprint <WASM>`
 

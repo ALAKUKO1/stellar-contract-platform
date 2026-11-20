@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Compatibility: `compat --policy-file <FILE>` loads explicit rule booleans from
+  a `.yml`, `.yaml`, `.toml`, or `.json` document. Unknown fields, missing
+  fields, and non-boolean values are rejected with the field named, the
+  `--policy strict|lenient` presets keep working, and the JSON report echoes the
+  resolved policy. See `docs/compatibility.md`.
 - Diff: `function_renamed` pairs one removal with one addition only when their
   signatures match exactly and the pairing is unambiguous. Parameterless
   functions are never paired. See `docs/interface-diff.md`.

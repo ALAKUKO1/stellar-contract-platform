@@ -81,6 +81,10 @@ window_secs = 30
 - An unknown `analysis.compatibility.policy` is an error.
 - An unsupported file extension is an unsupported-feature error (exit code `5`).
 
+`analysis.compatibility.policy` accepts only the `strict` and `lenient` presets.
+For individual rule settings, pass a separate policy document to
+`compat --policy-file <FILE>`; see [compatibility.md](compatibility.md).
+
 ## Not included
 
 Live environment-variable overrides are not implemented yet; the `rpc.endpoint`
