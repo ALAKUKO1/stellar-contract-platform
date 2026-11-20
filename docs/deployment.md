@@ -70,7 +70,9 @@ supplies the instance entry first and the code entry second.
 entry for a WASM hash and decodes the bytes. It builds a
 `LedgerKey::ContractCode` key, calls `getLedgerEntries`, and decodes the
 returned `LedgerEntryData`. It returns `None` when no code entry exists and
-rejects hashes that are not 32 bytes or decode larger than the WASM size limit.
+rejects hashes that are not 32 bytes. Decoded code larger than 64 MiB
+(`MAX_WASM_BYTES`, the same bound used for local artifacts) is rejected with a
+structured invalid-input error.
 
 This enables interface comparison between a local artifact and the deployed
 code (tracked as a follow-up).
