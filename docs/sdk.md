@@ -58,3 +58,27 @@ cargo run -p observatory-client --example inspect -- \
 
 The integration tests start a real API instance on an ephemeral loopback port
 and round-trip every endpoint; no public network access is required.
+
+## TypeScript client
+
+`sdks/typescript` is a dependency-free ESM client for Node 22.18 or newer (Node
+strips the TypeScript types at runtime, so no build step is needed).
+
+```ts
+import { ObservatoryClient, ApiError } from "@stellar-observatory/client";
+
+const client = new ObservatoryClient({
+  baseUrl: "http://127.0.0.1:8080",
+  apiKey: "sco_<id>_<secret>",
+  timeoutMs: 10_000,
+});
+
+const report = await client.inspect(wasm, false);
+console.log(report.wasm.artifact_sha256);
+```
+
+It exposes the same methods as the Rust client. Timeouts reject with
+`TimeoutError`, caller aborts with `AbortError`, and API failures with a typed
+`ApiError` carrying the stable `code`. Models mirror `docs/schemas/` and the
+OpenAPI document. Run the tests with `node --test` from `sdks/typescript`; see
+`sdks/typescript/README.md`.

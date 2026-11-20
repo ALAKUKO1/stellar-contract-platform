@@ -176,8 +176,8 @@ specification cannot silently drift.
 
 ## Client SDKs
 
-Typed Rust client lives under `crates/observatory-client`; see
-[`sdk.md`](sdk.md).
+Typed Rust and TypeScript clients live under `crates/observatory-client` and
+`sdks/typescript`; see [`sdk.md`](sdk.md).
 
 ## Not included
 
