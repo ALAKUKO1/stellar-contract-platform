@@ -10,6 +10,7 @@
 
 pub mod auth;
 pub mod config;
+pub mod policy;
 pub mod project;
 pub mod ratelimit;
 pub mod rbac;
@@ -18,6 +19,7 @@ pub mod service;
 pub use auth::{ApiKeyRecord, ApiKeyStore, Principal};
 pub use config::PlatformConfig;
 pub use observatory_compat::CompatibilityPolicy;
+pub use policy::{load_policy, parse_policy};
 pub use project::{ConfigFormat, ProjectConfig};
 pub use ratelimit::{RateLimitConfig, RateLimitDecision, RateLimiter};
 pub use rbac::{authorize, Permission, Role};

@@ -9,6 +9,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Fuzzing: a `cargo-fuzz` crate with a `spec_parse` target fuzzing
+  `observatory_spec::parse`, a valid seed corpus, and a scheduled nightly
+  workflow that uploads crashes. `fuzz/` is not a workspace member, so the
+  stable workspace gate does not need nightly. See `docs/testing.md`.
+- RPC: `observatory_rpc::HttpTransport` implements the live HTTPS transport
+  behind the off-by-default `live` feature. It revalidates the endpoint and SSRF
+  policy before every request, does not follow redirects, ignores environment
+  proxies, applies a 30-second timeout, and bounds responses to 8 MiB by
+  default. See `docs/deployment.md`.
+- Compatibility: `compat --policy-file <FILE>` loads explicit rule booleans from
+  a `.yml`, `.yaml`, `.toml`, or `.json` document. Unknown fields, missing
+  fields, and non-boolean values are rejected with the field named, the
+  `--policy strict|lenient` presets keep working, and the JSON report echoes the
+  resolved policy. See `docs/compatibility.md`.
 - Diff: `function_renamed` pairs one removal with one addition only when their
   signatures match exactly and the pairing is unambiguous. Parameterless
   functions are never paired. See `docs/interface-diff.md`.

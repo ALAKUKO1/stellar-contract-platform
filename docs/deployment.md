@@ -17,13 +17,34 @@ types.
 ## Transports
 
 The core does not hard-code a provider. Deployment uses the `Transport`
-abstraction. This build ships a deterministic **fixture transport**; the live
-HTTP transport is tracked as future work.
+abstraction. This build ships a deterministic **fixture transport** in the CLI;
+the library also provides an opt-in live HTTPS transport.
 
 ```bash
 stellar-contract-platform deployment inspect C... \
   --rpc-fixture rpc.json --network testnet
 ```
+
+### Live HTTPS transport
+
+`observatory_rpc::HttpTransport` implements `Transport` over HTTPS. It is behind
+the `observatory-rpc` crate feature `live`, which is off by default:
+
+```toml
+observatory-rpc = { path = "crates/observatory-rpc", features = ["live"] }
+```
+
+`HttpTransport::new(endpoint)` rejects anything `Endpoint::parse` rejects
+(`https` only, except loopback `http`), then applies the SSRF policy before every
+request. Loopback endpoints use the local policy; all others must resolve to
+public addresses. The transport never follows redirects, ignores environment
+proxies, applies a 30-second request timeout, and caps a response body at 8 MiB;
+`with_limits` overrides both limits. Failures are reported as typed RPC errors
+that name the endpoint host, without echoing the URL or credentials.
+
+The CLI does not switch to the live transport in this build; commands continue
+to require a fixture. Wiring the transport into `deployment` and `verify` is
+tracked separately.
 
 `rpc.json` maps method names to results:
 

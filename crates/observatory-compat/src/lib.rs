@@ -45,6 +45,7 @@ pub enum CompatibilityStatus {
 
 /// Configuration of the compatibility rules.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct CompatibilityPolicy {
     /// Removing a function is breaking.
     pub function_removal_is_breaking: bool,

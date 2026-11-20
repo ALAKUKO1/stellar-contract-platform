@@ -17,6 +17,11 @@ use serde_json::{json, Value};
 
 pub mod net;
 
+#[cfg(feature = "live")]
+pub mod live;
+
+#[cfg(feature = "live")]
+pub use live::{HttpTransport, DEFAULT_MAX_RESPONSE_BYTES, DEFAULT_TIMEOUT};
 pub use net::{AddressClass, SsrfPolicy};
 pub use observatory_core::{RpcError, RpcErrorKind};
 

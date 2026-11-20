@@ -113,8 +113,11 @@ enum Command {
         /// Updated contract WASM.
         new: PathBuf,
         /// Compatibility policy: `strict` or `lenient` (overrides the project config).
-        #[arg(long)]
+        #[arg(long, conflicts_with = "policy_file")]
         policy: Option<String>,
+        /// Compatibility policy document (`.yml`, `.yaml`, `.toml`, or `.json`).
+        #[arg(long, value_name = "FILE")]
+        policy_file: Option<PathBuf>,
     },
     /// Compute deterministic fingerprints for a contract artifact.
     Fingerprint {
@@ -389,16 +392,25 @@ fn run(cli: &Cli, format: OutputFormat) -> Result<ObservatoryExit> {
             }
             Ok(ObservatoryExit::Success)
         }
-        Command::Compat { old, new, policy } => {
-            let policy = match policy.as_deref() {
-                Some("strict") => observatory_platform::CompatibilityPolicy::strict(),
-                Some("lenient") => observatory_platform::CompatibilityPolicy::lenient(),
-                Some(other) => {
-                    return Err(ObservatoryError::invalid(format!(
-                        "unknown policy `{other}`; expected strict or lenient"
-                    )))
+        Command::Compat {
+            old,
+            new,
+            policy,
+            policy_file,
+        } => {
+            let policy = if let Some(path) = policy_file {
+                observatory_platform::load_policy(path)?
+            } else {
+                match policy.as_deref() {
+                    Some("strict") => observatory_platform::CompatibilityPolicy::strict(),
+                    Some("lenient") => observatory_platform::CompatibilityPolicy::lenient(),
+                    Some(other) => {
+                        return Err(ObservatoryError::invalid(format!(
+                            "unknown policy `{other}`; expected strict or lenient"
+                        )))
+                    }
+                    None => project.compatibility_policy()?,
                 }
-                None => project.compatibility_policy()?,
             };
             let old_interface = load_interface(old)?;
             let new_interface = load_interface(new)?;

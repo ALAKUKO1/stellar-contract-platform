@@ -489,3 +489,51 @@ fn config_file_selects_compatibility_policy() {
         .assert()
         .code(6);
 }
+
+#[test]
+fn policy_file_selects_rules_and_echoes_the_resolved_policy() {
+    let old = write_temp(
+        &module_with_spec(&[spec_function("a", &[], None), spec_function("b", &[], None)]),
+        ".wasm",
+    );
+    let new = write_temp(&module_with_spec(&[spec_function("a", &[], None)]), ".wasm");
+    let lenient = write_temp(
+        b"function_removal_is_breaking: false\n\
+          signature_change_is_breaking: false\n\
+          type_removal_is_breaking: false\n\
+          type_change_is_breaking: false\n\
+          event_removal_is_breaking: false\n\
+          event_change_is_breaking: false\n",
+        ".yml",
+    );
+    binary()
+        .args([
+            "compat",
+            old.path().to_str().unwrap(),
+            new.path().to_str().unwrap(),
+            "--policy-file",
+            lenient.path().to_str().unwrap(),
+            "--json",
+        ])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("\"status\": \"compatible\""))
+        .stdout(predicate::str::contains(
+            "\"function_removal_is_breaking\": false",
+        ));
+
+    let invalid = write_temp(b"function_removal_is_breaking: sometimes\n", ".yml");
+    binary()
+        .args([
+            "compat",
+            old.path().to_str().unwrap(),
+            new.path().to_str().unwrap(),
+            "--policy-file",
+            invalid.path().to_str().unwrap(),
+            "--json",
+        ])
+        .assert()
+        .code(2)
+        .stdout(predicate::str::contains("function_removal_is_breaking"))
+        .stdout(predicate::str::contains("\"code\":\"invalid_input\""));
+}
