@@ -17,11 +17,16 @@ stellar-contract-platform [OPTIONS] <COMMAND>
 
 ## Commands
 
-### `inspect <WASM> [--security]`
+### `inspect <WASM> [--security] [--dump-section <NAME>]`
 
 Inspects a WASM artifact: size, version, artifact SHA-256, type/function/table/
 global counts, memories, imports, exports, custom sections, and code size. With
 `--security`, runs bounded heuristics.
+
+`--dump-section <NAME>` prints the named custom section payload as lowercase
+hex. The dump is bounded at 64 KiB: a larger payload is rejected with an error
+rather than truncated. An absent section is reported as absent and does not fail
+the command. The section is only read; it is never executed.
 
 ### `spec <WASM> [--function <NAME>] [--type <TYPE>]`
 

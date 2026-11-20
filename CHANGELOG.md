@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- CLI: `inspect --dump-section <NAME>` prints a named custom-section payload as
+  bounded lowercase hex, capped at 64 KiB. Oversized payloads are rejected with
+  a clear error, absent sections are reported as absent, and the section is
+  never executed. See `docs/cli.md`.
 - Fuzzing: a `wasm_inspect` `cargo-fuzz` target exercising
   `observatory_wasm::inspect` with a seed corpus. The scheduled workflow runs
   both fuzz targets and fails when a crash artifact is produced. See
