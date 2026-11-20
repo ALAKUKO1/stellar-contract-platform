@@ -67,6 +67,9 @@ enum Command {
         /// Also run bounded interface/artifact heuristics.
         #[arg(long)]
         security: bool,
+        /// Dump a named custom section as bounded hex (max 64 KiB).
+        #[arg(long, value_name = "NAME")]
+        dump_section: Option<String>,
     },
     /// Inspect the contract specification embedded in a WASM artifact.
     Spec {
@@ -297,7 +300,11 @@ fn run(cli: &Cli, format: OutputFormat) -> Result<ObservatoryExit> {
     }
     let project = load_config(cli)?;
     match &cli.command {
-        Command::Inspect { wasm, security } => {
+        Command::Inspect {
+            wasm,
+            security,
+            dump_section,
+        } => {
             let bytes = observatory_wasm::load_file(wasm)?;
             let report = observatory_wasm::inspect(&bytes)?;
             let interface = ContractInterface::from_wasm(&bytes).ok();
@@ -307,11 +314,26 @@ fn run(cli: &Cli, format: OutputFormat) -> Result<ObservatoryExit> {
                     audit = audit.merge(observatory_audit::audit_interface(interface));
                 }
             }
-            let payload = serde_json::json!({
+            let section = match dump_section {
+                Some(name) => {
+                    let dump = observatory_wasm::dump_custom_section(&bytes, name)?;
+                    Some(serde_json::json!({
+                        "name": name,
+                        "present": dump.is_some(),
+                        "size_bytes": dump.as_ref().map(|dump| dump.size_bytes),
+                        "hex": dump.as_ref().map(|dump| &dump.hex),
+                    }))
+                }
+                None => None,
+            };
+            let mut payload = serde_json::json!({
                 "wasm": report,
                 "interface": interface,
                 "audit": if *security { Some(audit) } else { None },
             });
+            if let Some(section) = section {
+                payload["section"] = section;
+            }
             emit(format, "inspect", &payload, || print_inspect(&payload))?;
             Ok(ObservatoryExit::Success)
         }
@@ -722,6 +744,18 @@ fn print_inspect(payload: &serde_json::Value) {
     );
     if let Some(audit) = payload.get("audit").filter(|value| !value.is_null()) {
         println!("audit: {}", audit["status"].as_str().unwrap_or("PASS"));
+    }
+    if let Some(section) = payload.get("section").filter(|value| !value.is_null()) {
+        let name = section["name"].as_str().unwrap_or_default();
+        if section["present"].as_bool().unwrap_or(false) {
+            println!(
+                "custom section `{name}`: {} bytes",
+                section["size_bytes"].as_u64().unwrap_or(0)
+            );
+            println!("{}", section["hex"].as_str().unwrap_or_default());
+        } else {
+            println!("custom section `{name}`: absent");
+        }
     }
 }
 

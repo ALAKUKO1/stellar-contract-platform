@@ -17,7 +17,18 @@
       "properties": {
         "wasm": { "type": "object" },
         "interface": { "type": ["object", "null"] },
-        "audit": { "type": ["object", "null"] }
+        "audit": { "type": ["object", "null"] },
+        "section": {
+          "type": "object",
+          "description": "Present only with --dump-section; bounded hex of the named custom section.",
+          "required": ["name", "present"],
+          "properties": {
+            "name": { "type": "string" },
+            "present": { "type": "boolean" },
+            "size_bytes": { "type": ["integer", "null"] },
+            "hex": { "type": ["string", "null"] }
+          }
+        }
       }
     }
   }

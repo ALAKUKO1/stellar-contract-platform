@@ -1,0 +1,18 @@
+{
+  "name": "@stellar-observatory/client",
+  "version": "0.1.0",
+  "description": "Typed ESM client for the Stellar Contract Observatory REST API.",
+  "type": "module",
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "engines": {
+    "node": ">=22.18"
+  },
+  "scripts": {
+    "test": "node --test"
+  },
+  "license": "Apache-2.0"
+}

@@ -13,7 +13,7 @@ use std::path::Path;
 use observatory_core::hash::sha256_hex;
 use observatory_core::limits::{MAX_CUSTOM_SECTIONS, MAX_EXPORTS, MAX_IMPORTS, MAX_WASM_BYTES};
 use observatory_core::{ObservatoryError, Result};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use wasmparser::{ExternalKind, Parser, Payload, TypeRef};
 
 /// Custom section name carrying the Soroban contract specification.
@@ -23,8 +23,16 @@ pub const CONTRACT_META_SECTION: &str = "contractmetav0";
 /// Custom section name carrying the contract environment metadata.
 pub const CONTRACT_ENV_META_SECTION: &str = "contractenvmetav0";
 
+/// Maximum custom-section payload size that [`dump_custom_section`] will
+/// return as hex, in bytes (64 KiB).
+///
+/// The cap bounds both the copy and the rendered output. Larger sections are
+/// rejected rather than truncated, so a dump is never mistaken for the whole
+/// payload.
+pub const MAX_DUMP_BYTES: usize = 64 * 1024;
+
 /// A single import entry.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ImportInfo {
     /// Import module, for example `env`.
     pub module: String,
@@ -35,7 +43,7 @@ pub struct ImportInfo {
 }
 
 /// A single export entry.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ExportInfo {
     /// Export name.
     pub name: String,
@@ -44,7 +52,7 @@ pub struct ExportInfo {
 }
 
 /// A custom section entry.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CustomSectionInfo {
     /// Section name.
     pub name: String,
@@ -53,7 +61,7 @@ pub struct CustomSectionInfo {
 }
 
 /// Memory declaration.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct MemoryInfo {
     /// Initial number of 64 KiB pages.
     pub initial_pages: u64,
@@ -64,7 +72,7 @@ pub struct MemoryInfo {
 }
 
 /// The result of inspecting a WASM artifact.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct WasmReport {
     /// Artifact size in bytes.
     pub size_bytes: usize,
@@ -248,6 +256,50 @@ pub fn inspect(bytes: &[u8]) -> Result<WasmReport> {
     Ok(report)
 }
 
+/// A bounded hex dump of a custom section payload.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SectionDump {
+    /// Section name.
+    pub name: String,
+    /// Payload size in bytes.
+    pub size_bytes: usize,
+    /// Payload rendered as lowercase hex.
+    pub hex: String,
+}
+
+/// Dump a named custom section payload as bounded hex.
+///
+/// Returns `Ok(None)` when the section is absent and a structured error when
+/// its payload exceeds [`MAX_DUMP_BYTES`]. The section is only read, never
+/// executed.
+pub fn dump_custom_section(bytes: &[u8], name: &str) -> Result<Option<SectionDump>> {
+    for payload in Parser::new(0).parse_all(bytes) {
+        let payload = payload.map_err(|error| ObservatoryError::wasm(error.to_string()))?;
+        if let Payload::CustomSection(section) = payload {
+            if section.name() == name {
+                let data = section.data();
+                if data.len() > MAX_DUMP_BYTES {
+                    return Err(ObservatoryError::invalid(format!(
+                        "custom section `{name}` is {} bytes, exceeding the {MAX_DUMP_BYTES} byte dump limit",
+                        data.len()
+                    )));
+                }
+                let mut hex = String::with_capacity(data.len() * 2);
+                for byte in data {
+                    std::fmt::Write::write_fmt(&mut hex, format_args!("{byte:02x}"))
+                        .expect("writing to a String cannot fail");
+                }
+                return Ok(Some(SectionDump {
+                    name: name.to_string(),
+                    size_bytes: data.len(),
+                    hex,
+                }));
+            }
+        }
+    }
+    Ok(None)
+}
+
 /// Extract the raw bytes of a named custom section, if present.
 pub fn extract_custom_section(bytes: &[u8], name: &str) -> Result<Option<Vec<u8>>> {
     for payload in Parser::new(0).parse_all(bytes) {
@@ -335,6 +387,30 @@ mod tests {
         let data = extract_custom_section(&module, "hello").unwrap();
         assert_eq!(data, Some(vec![9, 8, 7]));
         assert_eq!(extract_custom_section(&module, "missing").unwrap(), None);
+    }
+
+    #[test]
+    fn dumps_a_custom_section_as_bounded_hex() {
+        let module = module_with_custom_section("hello", &[9, 8, 7]);
+        let dump = dump_custom_section(&module, "hello").unwrap().unwrap();
+        assert_eq!(dump.name, "hello");
+        assert_eq!(dump.size_bytes, 3);
+        assert_eq!(dump.hex, "090807");
+    }
+
+    #[test]
+    fn dumps_absent_section_as_none() {
+        let module = module_with_custom_section("hello", &[1]);
+        assert_eq!(dump_custom_section(&module, "missing").unwrap(), None);
+    }
+
+    #[test]
+    fn rejects_a_section_larger_than_the_dump_limit() {
+        let payload = vec![0u8; MAX_DUMP_BYTES + 1];
+        let module = module_with_custom_section("big", &payload);
+        let error = dump_custom_section(&module, "big").unwrap_err();
+        assert!(matches!(error, ObservatoryError::InvalidInput(_)));
+        assert!(error.to_string().contains("dump limit"));
     }
 
     #[test]

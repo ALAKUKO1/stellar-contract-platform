@@ -9,6 +9,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- SDK: `sdks/typescript`, a dependency-free ESM TypeScript client for the REST
+  API. It covers every endpoint, sends `X-API-Key`, supports configurable
+  timeouts and caller abort signals, maps stable API codes to typed errors, and
+  ships `node:test` tests against a loopback mock plus an example. Models mirror
+  the published JSON Schemas. See `sdks/typescript/README.md`.
+- SDK: `observatory-client`, a typed blocking Rust client for the REST API. It
+  reuses the engine's report types, supports `X-API-Key` authentication and
+  configurable timeouts, maps stable API codes to a typed error enum, and
+  round-trips every endpoint against a loopback API instance in its integration
+  tests. See `docs/sdk.md`.
+- CLI: `inspect --dump-section <NAME>` prints a named custom-section payload as
+  bounded lowercase hex, capped at 64 KiB. Oversized payloads are rejected with
+  a clear error, absent sections are reported as absent, and the section is
+  never executed. See `docs/cli.md`.
 - Fuzzing: a `wasm_inspect` `cargo-fuzz` target exercising
   `observatory_wasm::inspect` with a seed corpus. The scheduled workflow runs
   both fuzz targets and fails when a crash artifact is produced. See

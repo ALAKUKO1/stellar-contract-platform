@@ -46,6 +46,35 @@ fn inspect_reports_contract_spec() {
 }
 
 #[test]
+fn inspect_dumps_a_custom_section_and_reports_absence() {
+    let module = observatory_testutil::module_with_custom_section("hello", &[9, 8, 7]);
+    let file = write_temp(&module, ".wasm");
+    binary()
+        .args([
+            "inspect",
+            file.path().to_str().unwrap(),
+            "--dump-section",
+            "hello",
+            "--json",
+        ])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("\"present\": true"))
+        .stdout(predicate::str::contains("\"hex\": \"090807\""));
+
+    binary()
+        .args([
+            "inspect",
+            file.path().to_str().unwrap(),
+            "--dump-section",
+            "missing",
+        ])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("custom section `missing`: absent"));
+}
+
+#[test]
 fn inspect_security_emits_audit() {
     let file = write_temp(&module_with_spec(&contract_entries()), ".wasm");
     binary()

@@ -1,0 +1,30 @@
+[package]
+name = "observatory-client"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+description = "Typed Rust client for the Stellar Contract Observatory REST API."
+
+[dependencies]
+observatory-core.workspace = true
+observatory-output.workspace = true
+observatory-wasm.workspace = true
+observatory-spec.workspace = true
+observatory-interface.workspace = true
+observatory-diff.workspace = true
+observatory-compat.workspace = true
+observatory-audit.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+base64.workspace = true
+ureq.workspace = true
+
+[dev-dependencies]
+observatory-api.workspace = true
+observatory-platform.workspace = true
+observatory-testutil.workspace = true
+stellar-xdr.workspace = true
+tempfile.workspace = true
