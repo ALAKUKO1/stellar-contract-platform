@@ -9,6 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- WASM: `inspect` now reports bounded details for the start, data, element,
+  and table sections: the start function index, segment counts and per-segment
+  sizes or item counts, and table element/limit declarations. Data segment
+  contents are never retained, and malformed detail sections still return a
+  structured error. See `docs/contract-inspection.md` and
+  `docs/schemas/inspect.schema.json`.
 - SDK: `sdks/typescript`, a dependency-free ESM TypeScript client for the REST
   API. It covers every endpoint, sends `X-API-Key`, supports configurable
   timeouts and caller abort signals, maps stable API codes to typed errors, and

@@ -27,3 +27,12 @@ pub const MAX_IMPORTS: usize = 100_000;
 
 /// Maximum number of exports retained in an inspection report.
 pub const MAX_EXPORTS: usize = 100_000;
+
+/// Maximum number of table details retained in an inspection report.
+pub const MAX_TABLES: usize = 4096;
+
+/// Maximum number of data segment summaries retained in an inspection report.
+pub const MAX_DATA_SEGMENTS: usize = 100_000;
+
+/// Maximum number of element segment summaries retained in an inspection report.
+pub const MAX_ELEMENT_SEGMENTS: usize = 100_000;

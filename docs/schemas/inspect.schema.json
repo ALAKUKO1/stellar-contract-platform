@@ -15,7 +15,68 @@
       "additionalProperties": false,
       "required": ["wasm"],
       "properties": {
-        "wasm": { "type": "object" },
+        "wasm": {
+          "type": "object",
+          "properties": {
+            "size_bytes": { "type": "integer", "minimum": 0 },
+            "version": { "type": "integer", "minimum": 0 },
+            "artifact_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+            "type_count": { "type": "integer", "minimum": 0 },
+            "function_count": { "type": "integer", "minimum": 0 },
+            "table_count": { "type": "integer", "minimum": 0 },
+            "global_count": { "type": "integer", "minimum": 0 },
+            "start": {
+              "type": ["object", "null"],
+              "required": ["function_index"],
+              "properties": {
+                "function_index": { "type": "integer", "minimum": 0 }
+              }
+            },
+            "data_segment_count": { "type": "integer", "minimum": 0 },
+            "data_segments": {
+              "type": "array",
+              "description": "Bounded summaries; segment contents are never included.",
+              "items": {
+                "type": "object",
+                "required": ["size_bytes"],
+                "properties": {
+                  "size_bytes": { "type": "integer", "minimum": 0 }
+                }
+              }
+            },
+            "element_segment_count": { "type": "integer", "minimum": 0 },
+            "element_segments": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "required": ["item_count"],
+                "properties": {
+                  "item_count": { "type": "integer", "minimum": 0 }
+                }
+              }
+            },
+            "tables": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "required": ["element_type", "initial", "maximum"],
+                "properties": {
+                  "element_type": { "type": "string" },
+                  "initial": { "type": "integer", "minimum": 0 },
+                  "maximum": { "type": ["integer", "null"], "minimum": 0 }
+                }
+              }
+            },
+            "memories": { "type": "array", "items": { "type": "object" } },
+            "imports": { "type": "array", "items": { "type": "object" } },
+            "exports": { "type": "array", "items": { "type": "object" } },
+            "custom_sections": { "type": "array", "items": { "type": "object" } },
+            "code_section_bytes": { "type": "integer", "minimum": 0 },
+            "has_contract_spec": { "type": "boolean" },
+            "contract_spec_bytes": { "type": ["integer", "null"], "minimum": 0 },
+            "truncated": { "type": "boolean" }
+          }
+        },
         "interface": { "type": ["object", "null"] },
         "audit": { "type": ["object", "null"] },
         "section": {

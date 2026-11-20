@@ -12,6 +12,12 @@
 | `type_count` | Number of declared types. |
 | `function_count` | Number of declared functions. |
 | `table_count` / `global_count` | Declared tables and globals. |
+| `start` | Start function index, when the module declares one. |
+| `data_segment_count` | Number of data segments. |
+| `data_segments` | Bounded per-segment sizes; contents are never retained. |
+| `element_segment_count` | Number of element segments. |
+| `element_segments` | Bounded per-segment item counts. |
+| `tables` | Element type, initial size, and maximum size. |
 | `memories` | Initial/maximum pages and shared flag. |
 | `imports` | Module, name, and kind, in module order. |
 | `exports` | Name and kind, in module order. |
@@ -25,7 +31,9 @@
 
 - Inspection never executes the module.
 - Input is bounded to 64 MiB (`MAX_WASM_BYTES`).
-- Import/export/custom-section lists are bounded; `truncated` reports clipping.
+- Import/export/custom-section, table, data, and element lists are bounded;
+  `truncated` reports clipping. Counts are still read from section headers, so
+  they stay exact when a summary list is clipped.
 - Malformed input returns a structured error (`wasm error`).
 
 ## Ordering
