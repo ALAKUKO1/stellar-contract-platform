@@ -1,0 +1,24 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/Tech-Cred/stellar-contract-platform/blob/main/docs/schemas/inspect.schema.json",
+  "title": "inspect report",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "kind", "tool", "version", "data"],
+  "properties": {
+    "schema_version": { "const": "1.0" },
+    "kind": { "const": "inspect" },
+    "tool": { "const": "stellar-contract-platform" },
+    "version": { "type": "string", "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+" },
+    "data": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["wasm"],
+      "properties": {
+        "wasm": { "type": "object" },
+        "interface": { "type": ["object", "null"] },
+        "audit": { "type": ["object", "null"] }
+      }
+    }
+  }
+}

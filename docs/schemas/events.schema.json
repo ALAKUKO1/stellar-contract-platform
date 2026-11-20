@@ -1,0 +1,24 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/Tech-Cred/stellar-contract-platform/blob/main/docs/schemas/events.schema.json",
+  "title": "events report",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "kind", "tool", "version", "data"],
+  "properties": {
+    "schema_version": { "const": "1.0" },
+    "kind": { "const": "events" },
+    "tool": { "const": "stellar-contract-platform" },
+    "version": { "type": "string", "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+" },
+    "data": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["total", "returned", "events"],
+      "properties": {
+        "total": { "type": "integer", "minimum": 0 },
+        "returned": { "type": "integer", "minimum": 0 },
+        "events": { "type": "array", "items": { "type": "object" } }
+      }
+    }
+  }
+}

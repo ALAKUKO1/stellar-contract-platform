@@ -1,0 +1,16 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/Tech-Cred/stellar-contract-platform/blob/main/docs/schemas/error.schema.json",
+  "title": "error report",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "kind", "code", "message"],
+  "properties": {
+    "schema_version": { "const": "1.0" },
+    "kind": { "const": "error" },
+    "code": { "type": "string" },
+    "message": { "type": "string" },
+    "rpc_kind": { "type": "string" },
+    "rpc_code": { "type": "integer" }
+  }
+}

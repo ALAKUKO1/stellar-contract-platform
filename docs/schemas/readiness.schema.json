@@ -1,0 +1,23 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/Tech-Cred/stellar-contract-platform/blob/main/docs/schemas/readiness.schema.json",
+  "title": "readiness report",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "kind", "tool", "version", "data"],
+  "properties": {
+    "schema_version": { "const": "1.0" },
+    "kind": { "const": "readiness" },
+    "tool": { "const": "stellar-contract-platform" },
+    "version": { "type": "string", "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+" },
+    "data": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status", "auth_required"],
+      "properties": {
+        "status": { "const": "ready" },
+        "auth_required": { "type": "boolean" }
+      }
+    }
+  }
+}

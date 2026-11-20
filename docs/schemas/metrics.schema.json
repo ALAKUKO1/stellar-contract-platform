@@ -1,0 +1,25 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/Tech-Cred/stellar-contract-platform/blob/main/docs/schemas/metrics.schema.json",
+  "title": "metrics report",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "kind", "tool", "version", "data"],
+  "properties": {
+    "schema_version": { "const": "1.0" },
+    "kind": { "const": "metrics" },
+    "tool": { "const": "stellar-contract-platform" },
+    "version": { "type": "string", "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+" },
+    "data": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["requests_total", "analyses_total", "errors_total", "rate_limited_total"],
+      "properties": {
+        "requests_total": { "type": "integer", "minimum": 0 },
+        "analyses_total": { "type": "integer", "minimum": 0 },
+        "errors_total": { "type": "integer", "minimum": 0 },
+        "rate_limited_total": { "type": "integer", "minimum": 0 }
+      }
+    }
+  }
+}

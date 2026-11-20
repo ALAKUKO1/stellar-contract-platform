@@ -1,0 +1,27 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/Tech-Cred/stellar-contract-platform/blob/main/docs/schemas/verify.schema.json",
+  "title": "verify report",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "kind", "tool", "version", "data"],
+  "properties": {
+    "schema_version": { "const": "1.0" },
+    "kind": { "const": "verify" },
+    "tool": { "const": "stellar-contract-platform" },
+    "version": { "type": "string", "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+" },
+    "data": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status", "contract_id", "network", "local_wasm_hash", "deployed_wasm_hash", "detail"],
+      "properties": {
+        "status": { "enum": ["MATCH", "MISMATCH", "INSUFFICIENT_DATA", "ERROR"] },
+        "contract_id": { "type": "string" },
+        "network": { "type": "string" },
+        "local_wasm_hash": { "type": "string" },
+        "deployed_wasm_hash": { "type": ["string", "null"] },
+        "detail": { "type": "string" }
+      }
+    }
+  }
+}

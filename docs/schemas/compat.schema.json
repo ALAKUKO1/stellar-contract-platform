@@ -1,0 +1,25 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/Tech-Cred/stellar-contract-platform/blob/main/docs/schemas/compat.schema.json",
+  "title": "compat report",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "kind", "tool", "version", "data"],
+  "properties": {
+    "schema_version": { "const": "1.0" },
+    "kind": { "const": "compat" },
+    "tool": { "const": "stellar-contract-platform" },
+    "version": { "type": "string", "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+" },
+    "data": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status", "policy", "reasons", "diff"],
+      "properties": {
+        "status": { "enum": ["compatible", "incompatible", "unknown"] },
+        "policy": { "type": "object" },
+        "reasons": { "type": "array", "items": { "type": "object" } },
+        "diff": { "type": "object" }
+      }
+    }
+  }
+}

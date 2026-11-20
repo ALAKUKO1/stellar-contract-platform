@@ -1,0 +1,36 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/Tech-Cred/stellar-contract-platform/blob/main/docs/schemas/verify.compare.schema.json",
+  "title": "verify.compare report",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "kind", "tool", "version", "data"],
+  "properties": {
+    "schema_version": { "const": "1.0" },
+    "kind": { "const": "verify.compare" },
+    "tool": { "const": "stellar-contract-platform" },
+    "version": { "type": "string", "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+" },
+    "data": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["equal", "compared_keys", "differences"],
+      "properties": {
+        "equal": { "type": "boolean" },
+        "compared_keys": { "type": "integer", "minimum": 0 },
+        "differences": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["key", "left", "right"],
+            "properties": {
+              "key": { "type": "string" },
+              "left": { "type": ["string", "null"] },
+              "right": { "type": ["string", "null"] }
+            }
+          }
+        }
+      }
+    }
+  }
+}

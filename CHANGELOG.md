@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Output: JSON Schema documents for every machine-readable report kind under
+  `docs/schemas/`, versioned with `SCHEMA_VERSION`. Tests validate a
+  representative report of each kind and reject invalid instances. See
+  `docs/schemas/README.md`.
 - Fuzzing: a `cargo-fuzz` crate with a `spec_parse` target fuzzing
   `observatory_spec::parse`, a valid seed corpus, and a scheduled nightly
   workflow that uploads crashes. `fuzz/` is not a workspace member, so the

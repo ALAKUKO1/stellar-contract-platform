@@ -1,0 +1,38 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/Tech-Cred/stellar-contract-platform/blob/main/docs/schemas/verify.interface.schema.json",
+  "title": "verify.interface report",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "kind", "tool", "version", "data"],
+  "properties": {
+    "schema_version": { "const": "1.0" },
+    "kind": { "const": "verify.interface" },
+    "tool": { "const": "stellar-contract-platform" },
+    "version": { "type": "string", "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+" },
+    "data": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "artifact",
+        "interface_match",
+        "local_interface_sha256",
+        "deployed_interface_sha256",
+        "diff",
+        "compatibility",
+        "source_verification",
+        "detail"
+      ],
+      "properties": {
+        "artifact": { "type": "object" },
+        "interface_match": { "type": ["boolean", "null"] },
+        "local_interface_sha256": { "type": ["string", "null"] },
+        "deployed_interface_sha256": { "type": ["string", "null"] },
+        "diff": { "type": ["object", "null"] },
+        "compatibility": { "type": ["object", "null"] },
+        "source_verification": { "type": "string" },
+        "detail": { "type": "string" }
+      }
+    }
+  }
+}

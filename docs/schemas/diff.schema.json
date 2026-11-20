@@ -1,0 +1,32 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/Tech-Cred/stellar-contract-platform/blob/main/docs/schemas/diff.schema.json",
+  "title": "diff report",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "kind", "tool", "version", "data"],
+  "properties": {
+    "schema_version": { "const": "1.0" },
+    "kind": { "const": "diff" },
+    "tool": { "const": "stellar-contract-platform" },
+    "version": { "type": "string", "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+" },
+    "data": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["changes", "summary"],
+      "properties": {
+        "changes": { "type": "array", "items": { "type": "object" } },
+        "summary": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["breaking", "non_breaking", "informational"],
+          "properties": {
+            "breaking": { "type": "integer", "minimum": 0 },
+            "non_breaking": { "type": "integer", "minimum": 0 },
+            "informational": { "type": "integer", "minimum": 0 }
+          }
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,25 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/Tech-Cred/stellar-contract-platform/blob/main/docs/schemas/spec.type.schema.json",
+  "title": "spec.type report",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "kind", "tool", "version", "data"],
+  "properties": {
+    "schema_version": { "const": "1.0" },
+    "kind": { "const": "spec.type" },
+    "tool": { "const": "stellar-contract-platform" },
+    "version": { "type": "string", "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+" },
+    "data": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["structs", "unions", "enums", "error_enums"],
+      "properties": {
+        "structs": { "type": "array", "items": { "type": "object" } },
+        "unions": { "type": "array", "items": { "type": "object" } },
+        "enums": { "type": "array", "items": { "type": "object" } },
+        "error_enums": { "type": "array", "items": { "type": "object" } }
+      }
+    }
+  }
+}
