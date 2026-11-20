@@ -40,6 +40,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Events: accept raw base64 `ContractEvent` XDR, either as a bare input or an
   `xdr` field on a fixture entry, and normalize it to the existing `EventRecord`
   shape. See `docs/events.md`.
+- Events: event types are canonicalized to lowercase, and diagnostic events are
+  documented and tested as a distinct type that is filtered by contract, type,
+  topic, and limit like any other event. See `docs/events.md`.
 - CLI: `completions <shell>` generates bash, zsh, fish, and PowerShell completion
   scripts. See `docs/cli.md`.
 - CI: reusable composite action at `.github/actions/observatory` that installs
