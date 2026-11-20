@@ -37,18 +37,26 @@ cargo test --workspace
 ## Fuzzing
 
 `fuzz/` is a separate `cargo-fuzz` crate and is deliberately **not** a workspace
-member, so the stable workspace gate never needs nightly. The `spec_parse`
-target feeds arbitrary bytes to `observatory_spec::parse`. A small valid seed
-corpus lives in `fuzz/corpus/spec_parse/`.
+member, so the stable workspace gate never needs nightly. Two targets run against
+untrusted bytes:
+
+- `spec_parse` feeds arbitrary bytes to `observatory_spec::parse`.
+- `wasm_inspect` feeds arbitrary bytes to `observatory_wasm::inspect`. It never
+  executes the module and performs no filesystem access.
+
+Small valid seed corpora live in `fuzz/corpus/spec_parse/` and
+`fuzz/corpus/wasm_inspect/`.
 
 ```bash
 cargo install cargo-fuzz
 rustup toolchain install nightly
 cargo fuzz run spec_parse
+cargo fuzz run wasm_inspect
 ```
 
-The scheduled `Fuzz smoke` workflow builds the target on nightly, runs it for 60
-seconds, and uploads any crashes under `fuzz/artifacts/spec_parse`.
+The scheduled `Fuzz smoke` workflow builds and runs both targets on nightly for
+60 seconds each, uploads any crashes under `fuzz/artifacts/<target>`, and fails
+the job when a crash artifact is present.
 
 ## Coverage
 

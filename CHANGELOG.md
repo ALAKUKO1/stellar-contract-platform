@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Fuzzing: a `wasm_inspect` `cargo-fuzz` target exercising
+  `observatory_wasm::inspect` with a seed corpus. The scheduled workflow runs
+  both fuzz targets and fails when a crash artifact is produced. See
+  `docs/testing.md`.
 - Audit: documented every heuristic rule id in `docs/security.md` with
   severity, rationale, limitations, and experimental status. A test checks the
   documented set against the crate's rule registry.

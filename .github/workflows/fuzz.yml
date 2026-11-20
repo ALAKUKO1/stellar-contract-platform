@@ -13,10 +13,14 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  spec-parse:
-    name: spec_parse (nightly)
+  fuzz:
+    name: ${{ matrix.target }} (nightly)
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        target: [spec_parse, wasm_inspect]
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -33,15 +37,22 @@ jobs:
         uses: taiki-e/install-action@86f7a0ffb25f40114606501a311ebcfaf882ea32 # v2
         with:
           tool: cargo-fuzz
-      - name: Build spec_parse
-        run: cargo fuzz build spec_parse
+      - name: Build ${{ matrix.target }}
+        run: cargo fuzz build ${{ matrix.target }}
       - name: Smoke run
-        run: cargo fuzz run spec_parse -- -max_total_time=60 -max_len=4096
+        run: cargo fuzz run ${{ matrix.target }} -- -max_total_time=60 -max_len=65536
       - name: Upload crashes
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          name: fuzz-crashes-spec_parse
-          path: fuzz/artifacts/spec_parse
+          name: fuzz-crashes-${{ matrix.target }}
+          path: fuzz/artifacts/${{ matrix.target }}
           if-no-files-found: ignore
           retention-days: 14
+      - name: Fail on crash artifacts
+        if: always()
+        run: |
+          if [ -d "fuzz/artifacts/${{ matrix.target }}" ] && [ -n "$(ls -A "fuzz/artifacts/${{ matrix.target }}")" ]; then
+            echo "::error::crashes were recorded for ${{ matrix.target }}"
+            exit 1
+          fi
