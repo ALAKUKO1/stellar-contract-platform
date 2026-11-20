@@ -15,6 +15,11 @@ cargo test --workspace
 - Unit tests live next to the code in `#[cfg(test)]` modules.
 - CLI integration tests live in `crates/observatory-cli/tests/cli.rs` and spawn
   the built binary against deterministic fixtures.
+- Property tests live in `crates/observatory-interface/tests/canonicalization.rs`.
+  They generate a bounded, fixed number of interfaces from the XDR fixture
+  builders, check that declaration order does not change the fingerprint, and
+  check that canonicalization is idempotent. Failures shrink to a minimal set
+  of spec entries; there is no external randomness.
 - `observatory-testutil` builds fixtures from bytes and real `stellar-xdr`
   values; no checked-in binary blobs are required so tests stay reviewable.
 - API integration tests live in `crates/observatory-api/tests/`. The concurrency
