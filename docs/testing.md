@@ -17,6 +17,9 @@ cargo test --workspace
   the built binary against deterministic fixtures.
 - `observatory-testutil` builds fixtures from bytes and real `stellar-xdr`
   values; no checked-in binary blobs are required so tests stay reviewable.
+- API integration tests live in `crates/observatory-api/tests/`. The concurrency
+  test starts an ephemeral loopback server and asserts exact rate-limit
+  accounting under a fixed, bounded worker load.
 
 ## Determinism rules
 
