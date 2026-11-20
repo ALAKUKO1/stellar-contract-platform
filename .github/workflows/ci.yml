@@ -109,8 +109,43 @@ jobs:
           persist-credentials: false
       - uses: dtolnay/rust-toolchain@1.88.0
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
+      - name: Check declared MSRV of every dependency
+        run: |
+          cargo metadata --format-version 1 --locked > metadata.json
+          python3 - <<'PY'
+          import json
+          import sys
+
+          msrv = (1, 88, 0)
+          with open("metadata.json") as handle:
+              metadata = json.load(handle)
+
+          offenders = []
+          for package in metadata["packages"]:
+              declared = package.get("rust_version")
+              if not declared:
+                  continue
+              version = tuple(int(part) for part in declared.split("."))
+              version += (0,) * (3 - len(version))
+              if version > msrv:
+                  offenders.append(
+                      "{} {} declares rust-version {}".format(
+                          package["name"], package["version"], declared
+                      )
+                  )
+
+          if offenders:
+              for offender in offenders:
+                  print("::error::{}; the workspace MSRV is 1.88.0".format(offender))
+              sys.exit(1)
+          print("All dependencies declare rust-version <= 1.88.0")
+          PY
       - run: cargo build --workspace --locked
       - run: cargo test --workspace --all-features --locked
+      - name: Explain an MSRV failure
+        if: failure()
+        run: |
+          echo "::error::The MSRV (1.88.0) job failed. The workspace or a dependency now needs a newer rustc. Pin the dependency with 'cargo update -p <crate> --precise <version>' instead of raising the MSRV. See CONTRIBUTING.md."
 
   docs:
     name: Docs
