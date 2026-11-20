@@ -55,6 +55,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Spec: decoding peeks at the 4-byte `ScSpecEntryKind` discriminant, so an
+  unknown entry kind returns an `unsupported` error naming the kind, offset, and
+  already-decoded entry count instead of a malformed-spec error. See
+  `docs/contract-specifications.md`.
 - CLI: an unsupported `--config` file extension is an unsupported-feature error
   (exit code `5`), not a usage error (`2`).
 
