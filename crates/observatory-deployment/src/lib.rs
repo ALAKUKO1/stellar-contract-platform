@@ -252,15 +252,18 @@ fn decode_deployed_wasm(entry: Option<&LedgerEntryResult>) -> Result<Option<Vec<
     let LedgerEntryData::ContractCode(code) = data else {
         return Ok(None);
     };
-    let wasm = code.code.to_vec();
-    if wasm.len() > MAX_WASM_BYTES {
+    check_wasm_size(code.code.len())?;
+    Ok(Some(code.code.to_vec()))
+}
+
+/// Reject deployed code larger than [`MAX_WASM_BYTES`].
+fn check_wasm_size(len: usize) -> Result<()> {
+    if len > MAX_WASM_BYTES {
         return Err(ObservatoryError::invalid(format!(
-            "deployed WASM is {} bytes, exceeding the {} byte limit",
-            wasm.len(),
-            MAX_WASM_BYTES
+            "deployed WASM is {len} bytes, exceeding the {MAX_WASM_BYTES} byte limit"
         )));
     }
-    Ok(Some(wasm))
+    Ok(())
 }
 
 #[cfg(test)]
@@ -388,6 +391,19 @@ mod tests {
         let client = RpcClient::new(Endpoint::parse("https://example.org").unwrap(), transport);
         let fetched = deployed_wasm(&client, &hex::encode([5u8; 32])).unwrap();
         assert_eq!(fetched, Some(wasm.to_vec()));
+    }
+
+    #[test]
+    fn rejects_deployed_wasm_over_the_documented_limit() {
+        assert!(check_wasm_size(MAX_WASM_BYTES).is_ok());
+        let error = check_wasm_size(MAX_WASM_BYTES + 1).unwrap_err();
+        assert_eq!(error.code(), observatory_core::ErrorCode::InvalidInput);
+        assert!(
+            error
+                .to_string()
+                .contains("exceeding the 67108864 byte limit"),
+            "{error}"
+        );
     }
 
     #[test]

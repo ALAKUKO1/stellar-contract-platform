@@ -24,6 +24,19 @@
 //! A bare array of event objects is also accepted. `topics` and `data` are
 //! optional. `type` defaults to `contract`.
 //!
+//! # Event types
+//!
+//! A normalized event always reports one of the three Stellar event types in
+//! lowercase: `system`, `contract`, or `diagnostic`. Fixture input is
+//! canonicalized to lowercase, and raw XDR uses the enum's own type name, so
+//! the same event always normalizes to the same `event_type` string.
+//!
+//! `diagnostic` events share the [`EventRecord`] shape with the other types:
+//! their topics and data are decoded and rendered identically. A diagnostic
+//! event's `contract_id` is `None` when the host emitted it outside a contract
+//! context, and its topics conventionally name the diagnostic kind (for
+//! example `fn_call`, `log`, or `error`).
+//!
 //! Raw `ContractEvent` XDR is accepted too. Pass a base64 blob directly, or a
 //! fixture entry with an `xdr` field (the `eventXdr` spelling is also accepted):
 //!
@@ -57,7 +70,7 @@ pub struct EventRecord {
     pub ledger: Option<u32>,
     /// Transaction hash, when known.
     pub tx_hash: Option<String>,
-    /// Event type: `system`, `contract`, or `diagnostic`.
+    /// Event type: `system`, `contract`, or `diagnostic` (lowercase).
     pub event_type: String,
     /// Topics rendered as JSON strings, in order.
     pub topics: Vec<String>,
@@ -68,6 +81,15 @@ pub struct EventRecord {
 }
 
 /// A filter over a set of events.
+///
+/// Filters are applied in a fixed order: contract, then type, then topic, then
+/// limit. Each filter that is `None` is a no-op.
+///
+/// Diagnostic events are filtered like any other event, with one consequence
+/// worth knowing: the contract filter requires an exact `contract_id` match, so
+/// events without a contract id (including diagnostic events emitted outside a
+/// contract) never match it. The type filter is case-insensitive, so
+/// `type = diagnostic` selects diagnostic events regardless of contract.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct EventFilter {
     /// Only keep events for this contract id.
@@ -309,7 +331,8 @@ fn parse_event(value: &Value) -> Result<EventRecord> {
             .get("type")
             .and_then(Value::as_str)
             .unwrap_or("contract")
-            .to_string(),
+            .trim()
+            .to_ascii_lowercase(),
         &topics,
         &data,
     )
@@ -404,6 +427,133 @@ mod tests {
     fn accepts_bare_array() {
         let value = json!([{ "type": "contract", "topics": [], "data": null }]);
         assert_eq!(parse_events(&value).unwrap().len(), 1);
+    }
+
+    #[test]
+    fn canonicalizes_event_types_to_lowercase() {
+        let events = parse_events(&json!([
+            { "type": "SYSTEM", "topics": [], "data": null },
+            { "type": "Contract", "topics": [], "data": null },
+            { "type": " Diagnostic ", "topics": [], "data": null }
+        ]))
+        .unwrap();
+        assert_eq!(
+            events
+                .iter()
+                .map(|event| event.event_type.as_str())
+                .collect::<Vec<_>>(),
+            vec!["system", "contract", "diagnostic"]
+        );
+    }
+
+    fn mixed_event_fixture() -> Value {
+        json!({
+            "events": [
+                {
+                    "contractId": "CAAA",
+                    "type": "contract",
+                    "topics": [symbol_base64("transfer")],
+                    "data": null
+                },
+                {
+                    "type": "system",
+                    "topics": [symbol_base64("mint")],
+                    "data": null
+                },
+                {
+                    "type": "diagnostic",
+                    "topics": [symbol_base64("log")],
+                    "data": symbol_base64("boom")
+                },
+                {
+                    "contractId": "CAAA",
+                    "type": "diagnostic",
+                    "topics": [symbol_base64("fn_call")],
+                    "data": null
+                }
+            ]
+        })
+    }
+
+    #[test]
+    fn filters_diagnostic_events_predictably() {
+        let events = parse_events(&mixed_event_fixture()).unwrap();
+
+        let diagnostics = filter(
+            &events,
+            &EventFilter {
+                event_type: Some("DIAGNOSTIC".to_string()),
+                ..Default::default()
+            },
+        );
+        assert_eq!(diagnostics.len(), 2);
+        assert!(diagnostics
+            .iter()
+            .all(|event| event.event_type == "diagnostic"));
+
+        let topic = filter(
+            &events,
+            &EventFilter {
+                topic: Some("log".to_string()),
+                ..Default::default()
+            },
+        );
+        assert_eq!(topic.len(), 1);
+        assert_eq!(topic[0].event_type, "diagnostic");
+        assert_eq!(topic[0].contract_id, None);
+
+        // An event without a contract id never matches a contract filter.
+        let by_contract = filter(
+            &events,
+            &EventFilter {
+                contract: Some("CAAA".to_string()),
+                ..Default::default()
+            },
+        );
+        assert_eq!(by_contract.len(), 2);
+        assert!(by_contract
+            .iter()
+            .all(|event| { event.contract_id.as_deref() == Some("CAAA") }));
+
+        let combined = filter(
+            &events,
+            &EventFilter {
+                contract: Some("CAAA".to_string()),
+                event_type: Some("diagnostic".to_string()),
+                ..Default::default()
+            },
+        );
+        assert_eq!(combined.len(), 1);
+        assert_eq!(combined[0].topic_symbols, vec!["fn_call"]);
+    }
+
+    #[test]
+    fn decodes_raw_diagnostic_event_distinctly() {
+        let event = ContractEvent {
+            ext: ExtensionPoint::V0,
+            contract_id: None,
+            type_: ContractEventType::Diagnostic,
+            body: ContractEventBody::V0(ContractEventV0 {
+                topics: vec![ScVal::Symbol(ScSymbol(StringM::try_from("log").unwrap()))]
+                    .try_into()
+                    .unwrap(),
+                data: ScVal::Symbol(ScSymbol(StringM::try_from("boom").unwrap())),
+            }),
+        };
+        let encoded = event.to_xdr_base64(Limits::none()).unwrap();
+        let record = parse_contract_event_xdr(&encoded).unwrap();
+        assert_eq!(record.event_type, "diagnostic");
+        assert_eq!(record.contract_id, None);
+        assert_eq!(record.topic_symbols, vec!["log"]);
+
+        let kept = filter(
+            &[record],
+            &EventFilter {
+                event_type: Some("diagnostic".to_string()),
+                ..Default::default()
+            },
+        );
+        assert_eq!(kept.len(), 1);
     }
 
     #[test]

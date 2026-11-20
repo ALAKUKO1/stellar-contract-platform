@@ -66,8 +66,8 @@ pub struct EnvMeta {
 
 /// Build metadata embedded in `contractmetav0`.
 ///
-/// Unknown keys are preserved verbatim, so the model remains extensible as the
-/// SDK adds metadata.
+/// Known keys are exposed through typed accessors; the raw map is preserved so
+/// unknown keys survive comparison and round-tripping.
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub struct BuildMetadata {
     /// Metadata key/value pairs.
@@ -75,10 +75,43 @@ pub struct BuildMetadata {
 }
 
 impl BuildMetadata {
+    /// Compiler version key (`rsver`).
+    pub const COMPILER_KEY: &'static str = "rsver";
+    /// SDK version key (`rssdkver`).
+    pub const SDK_KEY: &'static str = "rssdkver";
+    /// Build target key (`target`).
+    pub const TARGET_KEY: &'static str = "target";
+    /// Build profile key (`profile`).
+    pub const PROFILE_KEY: &'static str = "profile";
+
     /// Look up a metadata value.
     #[must_use]
     pub fn get(&self, key: &str) -> Option<&str> {
         self.entries.get(key).map(String::as_str)
+    }
+
+    /// The compiler version (`rsver`), when recorded.
+    #[must_use]
+    pub fn compiler(&self) -> Option<&str> {
+        self.get(Self::COMPILER_KEY)
+    }
+
+    /// The Soroban SDK version (`rssdkver`), when recorded.
+    #[must_use]
+    pub fn sdk(&self) -> Option<&str> {
+        self.get(Self::SDK_KEY)
+    }
+
+    /// The build target (`target`), when recorded.
+    #[must_use]
+    pub fn target(&self) -> Option<&str> {
+        self.get(Self::TARGET_KEY)
+    }
+
+    /// The build profile (`profile`), when recorded.
+    #[must_use]
+    pub fn profile(&self) -> Option<&str> {
+        self.get(Self::PROFILE_KEY)
     }
 
     /// Parse a metadata document from JSON (`{ "key": "value", ... }`).
@@ -521,6 +554,38 @@ mod tests {
             .unwrap();
         assert_eq!(metadata.get("rsver"), Some("1.85.0"));
         assert_eq!(metadata.get("rssdkver"), Some("22.0.0"));
+    }
+
+    #[test]
+    fn exposes_known_build_metadata_keys_and_preserves_unknown_ones() {
+        let metadata = BuildMetadata::from_json(&json!({
+            "rsver": "1.85.0",
+            "rssdkver": "22.0.0",
+            "target": "wasm32v1-none",
+            "profile": "release",
+            "custom_key": "kept"
+        }))
+        .unwrap();
+
+        assert_eq!(metadata.compiler(), Some("1.85.0"));
+        assert_eq!(metadata.sdk(), Some("22.0.0"));
+        assert_eq!(metadata.target(), Some("wasm32v1-none"));
+        assert_eq!(metadata.profile(), Some("release"));
+        assert_eq!(metadata.get("custom_key"), Some("kept"));
+
+        let round_tripped: BuildMetadata =
+            serde_json::from_value(serde_json::to_value(&metadata).unwrap()).unwrap();
+        assert_eq!(round_tripped, metadata);
+        assert_eq!(round_tripped.get("custom_key"), Some("kept"));
+    }
+
+    #[test]
+    fn missing_build_metadata_keys_are_none() {
+        let metadata = BuildMetadata::from_json(&json!({ "custom_key": "only" })).unwrap();
+        assert_eq!(metadata.compiler(), None);
+        assert_eq!(metadata.sdk(), None);
+        assert_eq!(metadata.target(), None);
+        assert_eq!(metadata.profile(), None);
     }
 
     #[test]
