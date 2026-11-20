@@ -11,10 +11,13 @@
 use std::path::Path;
 
 use observatory_core::hash::sha256_hex;
-use observatory_core::limits::{MAX_CUSTOM_SECTIONS, MAX_EXPORTS, MAX_IMPORTS, MAX_WASM_BYTES};
+use observatory_core::limits::{
+    MAX_CUSTOM_SECTIONS, MAX_DATA_SEGMENTS, MAX_ELEMENT_SEGMENTS, MAX_EXPORTS, MAX_IMPORTS,
+    MAX_TABLES, MAX_WASM_BYTES,
+};
 use observatory_core::{ObservatoryError, Result};
 use serde::{Deserialize, Serialize};
-use wasmparser::{ExternalKind, Parser, Payload, TypeRef};
+use wasmparser::{ElementItems, ExternalKind, Parser, Payload, TypeRef};
 
 /// Custom section name carrying the Soroban contract specification.
 pub const CONTRACT_SPEC_SECTION: &str = "contractspecv0";
@@ -71,6 +74,38 @@ pub struct MemoryInfo {
     pub shared: bool,
 }
 
+/// The start section, when declared.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct StartInfo {
+    /// Index of the start function.
+    pub function_index: u32,
+}
+
+/// A bounded summary of a data segment. Contents are never retained.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DataSegmentInfo {
+    /// Payload size in bytes.
+    pub size_bytes: usize,
+}
+
+/// A bounded summary of an element segment.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ElementSegmentInfo {
+    /// Number of items in the segment.
+    pub item_count: usize,
+}
+
+/// A table declaration.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TableInfo {
+    /// Element type, for example `funcref`.
+    pub element_type: String,
+    /// Initial number of elements.
+    pub initial: u64,
+    /// Maximum number of elements, if declared.
+    pub maximum: Option<u64>,
+}
+
 /// The result of inspecting a WASM artifact.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct WasmReport {
@@ -88,6 +123,18 @@ pub struct WasmReport {
     pub table_count: usize,
     /// Number of globals declared.
     pub global_count: usize,
+    /// Start section, when declared.
+    pub start: Option<StartInfo>,
+    /// Number of data segments declared.
+    pub data_segment_count: usize,
+    /// Bounded data segment summaries; never the segment contents.
+    pub data_segments: Vec<DataSegmentInfo>,
+    /// Number of element segments declared.
+    pub element_segment_count: usize,
+    /// Bounded element segment summaries.
+    pub element_segments: Vec<ElementSegmentInfo>,
+    /// Bounded table declarations.
+    pub tables: Vec<TableInfo>,
     /// Declared memories.
     pub memories: Vec<MemoryInfo>,
     /// Declared imports in module order.
@@ -171,6 +218,12 @@ pub fn inspect(bytes: &[u8]) -> Result<WasmReport> {
         function_count: 0,
         table_count: 0,
         global_count: 0,
+        start: None,
+        data_segment_count: 0,
+        data_segments: Vec::new(),
+        element_segment_count: 0,
+        element_segments: Vec::new(),
+        tables: Vec::new(),
         memories: Vec::new(),
         imports: Vec::new(),
         exports: Vec::new(),
@@ -187,8 +240,58 @@ pub fn inspect(bytes: &[u8]) -> Result<WasmReport> {
             Payload::Version { num, .. } => report.version = u32::from(num),
             Payload::TypeSection(reader) => report.type_count = reader.count() as usize,
             Payload::FunctionSection(reader) => report.function_count = reader.count() as usize,
-            Payload::TableSection(reader) => report.table_count = reader.count() as usize,
+            Payload::TableSection(reader) => {
+                report.table_count = reader.count() as usize;
+                for table in reader {
+                    let table = table.map_err(|error| ObservatoryError::wasm(error.to_string()))?;
+                    if report.tables.len() >= MAX_TABLES {
+                        report.truncated = true;
+                        break;
+                    }
+                    report.tables.push(TableInfo {
+                        element_type: table.ty.element_type.to_string(),
+                        initial: table.ty.initial,
+                        maximum: table.ty.maximum,
+                    });
+                }
+            }
             Payload::GlobalSection(reader) => report.global_count = reader.count() as usize,
+            Payload::StartSection { func, .. } => {
+                report.start = Some(StartInfo {
+                    function_index: func,
+                });
+            }
+            Payload::DataSection(reader) => {
+                report.data_segment_count = reader.count() as usize;
+                for data in reader {
+                    let data = data.map_err(|error| ObservatoryError::wasm(error.to_string()))?;
+                    if report.data_segments.len() >= MAX_DATA_SEGMENTS {
+                        report.truncated = true;
+                        break;
+                    }
+                    report.data_segments.push(DataSegmentInfo {
+                        size_bytes: data.data.len(),
+                    });
+                }
+            }
+            Payload::ElementSection(reader) => {
+                report.element_segment_count = reader.count() as usize;
+                for element in reader {
+                    let element =
+                        element.map_err(|error| ObservatoryError::wasm(error.to_string()))?;
+                    if report.element_segments.len() >= MAX_ELEMENT_SEGMENTS {
+                        report.truncated = true;
+                        break;
+                    }
+                    let item_count = match &element.items {
+                        ElementItems::Functions(items) => items.count() as usize,
+                        ElementItems::Expressions(_, items) => items.count() as usize,
+                    };
+                    report
+                        .element_segments
+                        .push(ElementSegmentInfo { item_count });
+                }
+            }
             Payload::MemorySection(reader) => {
                 for memory in reader {
                     let memory =
@@ -434,6 +537,67 @@ mod tests {
         assert_eq!(report.memories[0].initial_pages, 1);
         assert_eq!(report.memories[0].maximum_pages, Some(2));
         assert!(report.code_section_bytes > 0);
+    }
+
+    #[test]
+    fn reports_start_tables_data_and_element_details() {
+        let wasm = wat::parse_str(
+            r#"(module
+                (table 2 4 funcref)
+                (memory 1)
+                (global i32 (i32.const 7))
+                (func $f)
+                (start $f)
+                (data (i32.const 0) "hello")
+                (elem (i32.const 0) $f)
+            )"#,
+        )
+        .unwrap();
+        let report = inspect(&wasm).unwrap();
+        assert_eq!(report.start, Some(StartInfo { function_index: 0 }));
+        assert_eq!(report.table_count, 1);
+        assert_eq!(report.tables.len(), 1);
+        assert_eq!(report.tables[0].element_type, "funcref");
+        assert_eq!(report.tables[0].initial, 2);
+        assert_eq!(report.tables[0].maximum, Some(4));
+        assert_eq!(report.global_count, 1);
+        assert_eq!(report.data_segment_count, 1);
+        assert_eq!(
+            report.data_segments,
+            vec![DataSegmentInfo { size_bytes: 5 }]
+        );
+        assert_eq!(report.element_segment_count, 1);
+        assert_eq!(
+            report.element_segments,
+            vec![ElementSegmentInfo { item_count: 1 }]
+        );
+        // Segment contents must never be materialised in the report.
+        assert!(!format!("{report:?}").contains("hello"));
+    }
+
+    #[test]
+    fn reports_absent_start_data_and_element_sections() {
+        let report = inspect(&minimal_module()).unwrap();
+        assert_eq!(report.start, None);
+        assert_eq!(report.table_count, 0);
+        assert!(report.tables.is_empty());
+        assert_eq!(report.data_segment_count, 0);
+        assert!(report.data_segments.is_empty());
+        assert_eq!(report.element_segment_count, 0);
+        assert!(report.element_segments.is_empty());
+    }
+
+    #[test]
+    fn malformed_detail_sections_are_structured_errors() {
+        // A data section that declares one segment but supplies no payload.
+        let wasm = [b"\0asm".as_slice(), &[1, 0, 0, 0], &[11, 2, 1, 0]].concat();
+        let error = inspect(&wasm).unwrap_err();
+        assert!(matches!(error, ObservatoryError::Wasm(_)));
+
+        // A start section whose declared length runs past the input.
+        let wasm = [b"\0asm".as_slice(), &[1, 0, 0, 0], &[8, 3, 0]].concat();
+        let error = inspect(&wasm).unwrap_err();
+        assert!(matches!(error, ObservatoryError::Wasm(_)));
     }
 
     #[test]

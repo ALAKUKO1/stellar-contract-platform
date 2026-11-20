@@ -20,8 +20,25 @@ cargo build
 cargo test
 ```
 
-A recent stable Rust toolchain is required. The workspace `rust-version` is the
-MSRV.
+## Minimum supported Rust version (MSRV)
+
+The workspace MSRV is Rust **1.88** (`rust-version` in the workspace
+`Cargo.toml`). CI has a dedicated `MSRV (1.88.0)` job that runs on pull requests
+and pushes to `main`. It checks every resolved dependency's declared
+`rust-version`, then runs `cargo build --workspace --locked` and
+`cargo test --workspace --all-features --locked` with Rust 1.88.0. The job fails
+with an explicit message when the workspace or a dependency needs a newer rustc.
+
+Do not raise the MSRV to work around a dependency. Pin the dependency instead:
+
+```bash
+cargo update -p <crate> --precise <version>
+cargo metadata --format-version 1 --locked
+```
+
+Confirm no package declares `rust_version` above `1.88.0`, and keep the MSRV
+job's toolchain and the workspace `rust-version` in sync when the MSRV is raised
+deliberately.
 
 ## Before opening a pull request
 

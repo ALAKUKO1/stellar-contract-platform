@@ -39,6 +39,11 @@ Or build from a local clone — see [Quickstart](#quickstart).
 The package is named `observatory-cli`; the installed binary is named
 `stellar-contract-platform`.
 
+The workspace MSRV is Rust 1.88. A dedicated CI job builds and tests the whole
+workspace with 1.88.0 on pull requests and pushes to `main`, and fails if a
+dependency declares a higher `rust-version`. See
+[CONTRIBUTING.md](CONTRIBUTING.md#minimum-supported-rust-version-msrv).
+
 ## Quickstart
 
 ```bash

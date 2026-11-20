@@ -15,11 +15,39 @@ cargo test --workspace
 - Unit tests live next to the code in `#[cfg(test)]` modules.
 - CLI integration tests live in `crates/observatory-cli/tests/cli.rs` and spawn
   the built binary against deterministic fixtures.
+- Property tests live in `crates/observatory-interface/tests/canonicalization.rs`.
+  They generate a bounded, fixed number of interfaces from the XDR fixture
+  builders, check that declaration order does not change the fingerprint, and
+  check that canonicalization is idempotent. Failures shrink to a minimal set
+  of spec entries; there is no external randomness.
 - `observatory-testutil` builds fixtures from bytes and real `stellar-xdr`
   values; no checked-in binary blobs are required so tests stay reviewable.
 - API integration tests live in `crates/observatory-api/tests/`. The concurrency
   test starts an ephemeral loopback server and asserts exact rate-limit
   accounting under a fixed, bounded worker load.
+
+## Golden report files
+
+`crates/observatory-cli/tests/golden.rs` pins one JSON report per kind
+(`inspect`, `spec`, `events`, `diff`, `compat`, `fingerprint`, `deployment`,
+`verify`) against a checked-in file under
+`crates/observatory-cli/tests/golden/`. Inputs are built deterministically at
+test time. Before comparison the volatile envelope `version` is replaced with
+`<version>`, and absolute paths or timestamps are replaced with `<path>` and
+`<timestamp>` if they ever appear in a report. Everything else is compared
+byte-for-byte, so a changed serialized field fails the suite.
+
+After an intentional output change, regenerate the files and review the diff:
+
+```bash
+UPDATE_GOLDEN=1 cargo test -p observatory-cli --test golden
+```
+
+On PowerShell:
+
+```powershell
+$env:UPDATE_GOLDEN=1; cargo test -p observatory-cli --test golden
+```
 
 ## Determinism rules
 

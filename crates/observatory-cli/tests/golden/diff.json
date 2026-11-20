@@ -1,0 +1,23 @@
+{
+  "data": {
+    "changes": [
+      {
+        "detail": "function `b` was removed",
+        "kind": "function_removed",
+        "new": null,
+        "old": "b() -> ()",
+        "path": "function::b",
+        "severity": "breaking"
+      }
+    ],
+    "summary": {
+      "breaking": 1,
+      "informational": 0,
+      "non_breaking": 0
+    }
+  },
+  "kind": "diff",
+  "schema_version": "1.0",
+  "tool": "stellar-contract-platform",
+  "version": "<version>"
+}

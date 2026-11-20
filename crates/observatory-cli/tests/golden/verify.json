@@ -1,0 +1,14 @@
+{
+  "data": {
+    "contract_id": "CAEQSCIJBEEQSCIJBEEQSCIJBEEQSCIJBEEQSCIJBEEQSCIJBEEQTD2L",
+    "deployed_wasm_hash": "c5520d69d5800f4372bb88aa15a89598f5844d4018a07f9591a60bc9c2a65ff8",
+    "detail": "local artifact hash matches the deployed executable hash",
+    "local_wasm_hash": "c5520d69d5800f4372bb88aa15a89598f5844d4018a07f9591a60bc9c2a65ff8",
+    "network": "testnet",
+    "status": "MATCH"
+  },
+  "kind": "verify",
+  "schema_version": "1.0",
+  "tool": "stellar-contract-platform",
+  "version": "<version>"
+}
