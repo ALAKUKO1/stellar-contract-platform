@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Audit: documented every heuristic rule id in `docs/security.md` with
+  severity, rationale, limitations, and experimental status. A test checks the
+  documented set against the crate's rule registry.
 - Output: JSON Schema documents for every machine-readable report kind under
   `docs/schemas/`, versioned with `SCHEMA_VERSION`. Tests validate a
   representative report of each kind and reject invalid instances. See

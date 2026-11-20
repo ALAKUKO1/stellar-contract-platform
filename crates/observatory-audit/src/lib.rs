@@ -60,6 +60,34 @@ pub struct AuditReport {
     pub findings: Vec<Finding>,
 }
 
+/// Every rule id this crate can emit.
+///
+/// `docs/security.md` documents each one; a test asserts the two stay in sync.
+pub const RULE_IDS: &[&str] = &[
+    "artifact.duplicate-metadata-section",
+    "artifact.metadata-without-code",
+    "artifact.metadata-without-contract-spec",
+    "artifact.no-code",
+    "artifact.no-contract-spec",
+    "artifact.no-memory",
+    "artifact.oversized-spec",
+    "artifact.truncated-report",
+    "event.too-many-prefix-topics",
+    "function.duplicate-param",
+    "function.empty-name",
+    "function.unknown-type",
+    "interface.duplicate-event",
+    "interface.duplicate-function",
+    "interface.duplicate-type",
+    "interface.empty",
+    "interface.no-functions",
+    "spec.error",
+    "spec.info",
+    "spec.warning",
+    "type.duplicate-case",
+    "type.duplicate-field",
+];
+
 impl AuditReport {
     fn from_findings(mut findings: Vec<Finding>) -> Self {
         findings.sort_by(|a, b| a.id.cmp(&b.id).then_with(|| a.path.cmp(&b.path)));
@@ -732,5 +760,47 @@ mod tests {
         let first = a.clone().merge(b.clone());
         let second = a.merge(b);
         assert_eq!(first, second);
+    }
+
+    #[test]
+    fn registered_rule_ids_are_sorted_and_unique() {
+        let mut sorted = RULE_IDS.to_vec();
+        sorted.sort_unstable();
+        sorted.dedup();
+        assert_eq!(sorted, RULE_IDS);
+    }
+
+    #[test]
+    fn every_registered_rule_is_documented() {
+        let doc = include_str!("../../../docs/security.md");
+        for id in RULE_IDS {
+            assert!(
+                doc.contains(&format!("`{id}`")),
+                "rule `{id}` is missing from docs/security.md"
+            );
+        }
+    }
+
+    #[test]
+    fn emitted_rule_ids_are_registered() {
+        let report = audit_interface(&interface(vec![
+            spec_function(
+                "",
+                &[("x", ty_udt("Missing")), ("x", ScSpecTypeDef::U32)],
+                None,
+            ),
+            spec_function("a", &[], None),
+            spec_function("a", &[], None),
+            spec_struct("S", &[("f", ScSpecTypeDef::U32), ("f", ScSpecTypeDef::U32)]),
+            spec_enum("E", &[("A", 0), ("A", 1)]),
+        ]));
+        let artifact = audit_artifact(&observatory_wasm::inspect(&minimal_module()).unwrap());
+        for finding in report.findings.iter().chain(&artifact.findings) {
+            assert!(
+                RULE_IDS.contains(&finding.id.as_str()),
+                "unregistered rule id `{}`",
+                finding.id
+            );
+        }
     }
 }
