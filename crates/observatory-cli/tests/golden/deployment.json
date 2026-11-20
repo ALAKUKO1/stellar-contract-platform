@@ -1,0 +1,13 @@
+{
+  "data": {
+    "contract_id": "CAEQSCIJBEEQSCIJBEEQSCIJBEEQSCIJBEEQSCIJBEEQSCIJBEEQTD2L",
+    "found": true,
+    "last_modified_ledger_seq": 123,
+    "live_until_ledger_seq": 456,
+    "wasm_hash": "0707070707070707070707070707070707070707070707070707070707070707"
+  },
+  "kind": "deployment",
+  "schema_version": "1.0",
+  "tool": "stellar-contract-platform",
+  "version": "<version>"
+}

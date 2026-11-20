@@ -1,0 +1,82 @@
+{
+  "data": {
+    "audit": null,
+    "interface": {
+      "enums": [],
+      "error_enums": [],
+      "events": [],
+      "functions": [
+        {
+          "doc": "",
+          "inputs": [
+            {
+              "doc": "",
+              "name": "to",
+              "ty": {
+                "udt": {
+                  "name": "Recipient"
+                }
+              }
+            },
+            {
+              "doc": "",
+              "name": "amount",
+              "ty": "i128"
+            }
+          ],
+          "name": "transfer",
+          "outputs": [
+            "bool"
+          ]
+        }
+      ],
+      "schema_version": "1.0",
+      "structs": [
+        {
+          "doc": "",
+          "fields": [
+            {
+              "doc": "",
+              "name": "address",
+              "ty": "address"
+            }
+          ],
+          "name": "Recipient"
+        }
+      ],
+      "unions": []
+    },
+    "wasm": {
+      "artifact_sha256": "8cc5cafd0bbd7f2204e3e92ac496d151a61897c227d365e30df08af5ae3a31d7",
+      "code_section_bytes": 0,
+      "contract_spec_bytes": 136,
+      "custom_sections": [
+        {
+          "name": "contractspecv0",
+          "size": 136
+        }
+      ],
+      "data_segment_count": 0,
+      "data_segments": [],
+      "element_segment_count": 0,
+      "element_segments": [],
+      "exports": [],
+      "function_count": 0,
+      "global_count": 0,
+      "has_contract_spec": true,
+      "imports": [],
+      "memories": [],
+      "size_bytes": 162,
+      "start": null,
+      "table_count": 0,
+      "tables": [],
+      "truncated": false,
+      "type_count": 0,
+      "version": 1
+    }
+  },
+  "kind": "inspect",
+  "schema_version": "1.0",
+  "tool": "stellar-contract-platform",
+  "version": "<version>"
+}

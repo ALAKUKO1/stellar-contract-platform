@@ -1,0 +1,25 @@
+{
+  "data": {
+    "events": [
+      {
+        "contract_id": "CAAA",
+        "data": "\"void\"",
+        "event_type": "contract",
+        "ledger": 10,
+        "topic_symbols": [
+          "transfer"
+        ],
+        "topics": [
+          "{\"symbol\":\"transfer\"}"
+        ],
+        "tx_hash": null
+      }
+    ],
+    "returned": 1,
+    "total": 1
+  },
+  "kind": "events",
+  "schema_version": "1.0",
+  "tool": "stellar-contract-platform",
+  "version": "<version>"
+}

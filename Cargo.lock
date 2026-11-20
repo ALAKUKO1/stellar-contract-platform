@@ -1114,6 +1114,7 @@ dependencies = [
  "assert_cmd",
  "clap",
  "clap_complete",
+ "hex",
  "observatory-api",
  "observatory-audit",
  "observatory-compat",

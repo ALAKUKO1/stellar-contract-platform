@@ -1,0 +1,61 @@
+{
+  "data": {
+    "spec": {
+      "enums": [],
+      "error_enums": [],
+      "events": [],
+      "functions": [
+        {
+          "doc": "",
+          "inputs": [
+            {
+              "doc": "",
+              "name": "to",
+              "ty": {
+                "udt": {
+                  "name": "Recipient"
+                }
+              }
+            },
+            {
+              "doc": "",
+              "name": "amount",
+              "ty": "i128"
+            }
+          ],
+          "name": "transfer",
+          "outputs": [
+            "bool"
+          ]
+        }
+      ],
+      "structs": [
+        {
+          "doc": "",
+          "fields": [
+            {
+              "doc": "",
+              "name": "address",
+              "ty": "address"
+            }
+          ],
+          "name": "Recipient"
+        }
+      ],
+      "unions": []
+    },
+    "summary": {
+      "enums": 0,
+      "error_enums": 0,
+      "events": 0,
+      "functions": 1,
+      "issues": [],
+      "structs": 1,
+      "unions": 0
+    }
+  },
+  "kind": "spec",
+  "schema_version": "1.0",
+  "tool": "stellar-contract-platform",
+  "version": "<version>"
+}
