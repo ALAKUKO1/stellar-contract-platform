@@ -12,10 +12,10 @@ use std::collections::BTreeSet;
 use observatory_interface::ContractInterface;
 use observatory_spec::{SpecSeverity, SpecType};
 use observatory_wasm::{WasmReport, CONTRACT_ENV_META_SECTION, CONTRACT_META_SECTION};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 /// Overall audit status.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "UPPERCASE")]
 pub enum AuditStatus {
     /// No findings.
@@ -27,7 +27,7 @@ pub enum AuditStatus {
 }
 
 /// Severity of a single finding.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "UPPERCASE")]
 pub enum FindingSeverity {
     /// A non-fatal issue.
@@ -37,7 +37,7 @@ pub enum FindingSeverity {
 }
 
 /// A single audit finding.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Finding {
     /// Stable rule id, for example `interface.empty-name`.
     pub id: String,
@@ -52,7 +52,7 @@ pub struct Finding {
 }
 
 /// The result of running heuristics.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AuditReport {
     /// Overall status.
     pub status: AuditStatus,

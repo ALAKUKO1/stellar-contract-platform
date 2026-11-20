@@ -174,6 +174,11 @@ See [`rpc-errors.md`](rpc-errors.md) for the full taxonomy.
 and a test asserts every route is documented and vice versa, so the
 specification cannot silently drift.
 
+## Client SDKs
+
+Typed Rust client lives under `crates/observatory-client`; see
+[`sdk.md`](sdk.md).
+
 ## Not included
 
 - Webhook management endpoints (planned).

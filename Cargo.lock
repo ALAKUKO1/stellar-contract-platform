@@ -1138,6 +1138,30 @@ dependencies = [
 ]
 
 [[package]]
+name = "observatory-client"
+version = "0.1.0"
+dependencies = [
+ "base64 0.22.1",
+ "observatory-api",
+ "observatory-audit",
+ "observatory-compat",
+ "observatory-core",
+ "observatory-diff",
+ "observatory-interface",
+ "observatory-output",
+ "observatory-platform",
+ "observatory-spec",
+ "observatory-testutil",
+ "observatory-wasm",
+ "serde",
+ "serde_json",
+ "stellar-xdr",
+ "tempfile",
+ "thiserror",
+ "ureq",
+]
+
+[[package]]
 name = "observatory-compat"
 version = "0.1.0"
 dependencies = [

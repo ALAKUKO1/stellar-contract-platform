@@ -13,7 +13,7 @@ use std::path::Path;
 use observatory_core::hash::sha256_hex;
 use observatory_core::limits::{MAX_CUSTOM_SECTIONS, MAX_EXPORTS, MAX_IMPORTS, MAX_WASM_BYTES};
 use observatory_core::{ObservatoryError, Result};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use wasmparser::{ExternalKind, Parser, Payload, TypeRef};
 
 /// Custom section name carrying the Soroban contract specification.
@@ -32,7 +32,7 @@ pub const CONTRACT_ENV_META_SECTION: &str = "contractenvmetav0";
 pub const MAX_DUMP_BYTES: usize = 64 * 1024;
 
 /// A single import entry.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ImportInfo {
     /// Import module, for example `env`.
     pub module: String,
@@ -43,7 +43,7 @@ pub struct ImportInfo {
 }
 
 /// A single export entry.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ExportInfo {
     /// Export name.
     pub name: String,
@@ -52,7 +52,7 @@ pub struct ExportInfo {
 }
 
 /// A custom section entry.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CustomSectionInfo {
     /// Section name.
     pub name: String,
@@ -61,7 +61,7 @@ pub struct CustomSectionInfo {
 }
 
 /// Memory declaration.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct MemoryInfo {
     /// Initial number of 64 KiB pages.
     pub initial_pages: u64,
@@ -72,7 +72,7 @@ pub struct MemoryInfo {
 }
 
 /// The result of inspecting a WASM artifact.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct WasmReport {
     /// Artifact size in bytes.
     pub size_bytes: usize,
@@ -257,7 +257,7 @@ pub fn inspect(bytes: &[u8]) -> Result<WasmReport> {
 }
 
 /// A bounded hex dump of a custom section payload.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SectionDump {
     /// Section name.
     pub name: String,

@@ -115,7 +115,7 @@ impl CompatibilityPolicy {
 }
 
 /// One rule outcome with its explanation.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CompatibilityReason {
     /// Whether this reason makes the interface incompatible.
     pub breaking: bool,
@@ -126,7 +126,7 @@ pub struct CompatibilityReason {
 }
 
 /// The result of assessing compatibility.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CompatibilityAssessment {
     /// Overall verdict.
     pub status: CompatibilityStatus,

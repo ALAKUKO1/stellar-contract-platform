@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- SDK: `observatory-client`, a typed blocking Rust client for the REST API. It
+  reuses the engine's report types, supports `X-API-Key` authentication and
+  configurable timeouts, maps stable API codes to a typed error enum, and
+  round-trips every endpoint against a loopback API instance in its integration
+  tests. See `docs/sdk.md`.
 - CLI: `inspect --dump-section <NAME>` prints a named custom-section payload as
   bounded lowercase hex, capped at 64 KiB. Oversized payloads are rejected with
   a clear error, absent sections are reported as absent, and the section is

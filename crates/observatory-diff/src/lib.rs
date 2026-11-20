@@ -24,10 +24,10 @@
 
 use observatory_interface::ContractInterface;
 use observatory_spec::{SpecEvent, SpecFunction, SpecStruct, SpecType, SpecUnion};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 /// Default severity assigned to a change.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Severity {
     /// Purely informational; no interface impact.
@@ -39,7 +39,7 @@ pub enum Severity {
 }
 
 /// The kind of a change.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ChangeKind {
     /// A function was added.
@@ -83,7 +83,7 @@ impl ChangeKind {
 }
 
 /// A single interface change.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Change {
     /// The kind of change.
     pub kind: ChangeKind,
@@ -100,7 +100,7 @@ pub struct Change {
 }
 
 /// Aggregate counts of a diff.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub struct DiffSummary {
     /// Breaking change count.
     pub breaking: usize,
@@ -119,7 +119,7 @@ impl DiffSummary {
 }
 
 /// The result of diffing two interfaces.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct InterfaceDiff {
     /// All changes, deterministically ordered.
     pub changes: Vec<Change>,

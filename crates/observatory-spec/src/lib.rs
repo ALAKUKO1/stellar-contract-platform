@@ -11,7 +11,7 @@ use std::io::Cursor;
 
 use observatory_core::limits::{MAX_SPEC_ENTRIES, MAX_SPEC_SECTION_BYTES};
 use observatory_core::{ObservatoryError, Result};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use stellar_xdr::{
     Limited, Limits, ReadXdr, ScSpecEntry, ScSpecEventDataFormat, ScSpecEventParamLocationV0,
     ScSpecTypeDef,
@@ -23,7 +23,7 @@ pub use model::{
 };
 
 /// Severity of a specification validation issue.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum SpecSeverity {
     /// Informational.
@@ -35,7 +35,7 @@ pub enum SpecSeverity {
 }
 
 /// A single validation issue.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SpecIssue {
     /// Severity.
     pub severity: SpecSeverity,
@@ -44,7 +44,7 @@ pub struct SpecIssue {
 }
 
 /// Aggregate counts and validation issues for a specification.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SpecReport {
     /// Number of functions.
     pub functions: usize,

@@ -15,6 +15,7 @@ members = [
     "crates/observatory-output",
     "crates/observatory-platform",
     "crates/observatory-api",
+    "crates/observatory-client",
     "crates/observatory-testutil",
     "crates/observatory-cli",
 ]
@@ -65,6 +66,7 @@ observatory-audit = { path = "crates/observatory-audit", version = "0.1.0" }
 observatory-output = { path = "crates/observatory-output", version = "0.1.0" }
 observatory-platform = { path = "crates/observatory-platform", version = "0.1.0" }
 observatory-api = { path = "crates/observatory-api", version = "0.1.0" }
+observatory-client = { path = "crates/observatory-client", version = "0.1.0" }
 observatory-testutil = { path = "crates/observatory-testutil", version = "0.1.0" }
 
 [profile.release]
