@@ -59,18 +59,20 @@ hostnames, then rejects any non-public result:
 
 `SsrfPolicy::strict()` blocks loopback; `SsrfPolicy::local()` permits it for
 local development only. Endpoints can be checked with
-`Endpoint::validate_ssrf(&policy)`. The live transport (issue #13) must call this
-before connecting.
+`Endpoint::validate_ssrf(&policy)`. The live transport calls this before every
+request.
 
-Because the current build performs no server-initiated requests, SSRF is
-structurally absent today; this policy exists so the live transport can land
-safely.
+The fixture transport performs no network I/O, so SSRF is structurally absent
+on that path. The live transport (`observatory-rpc` feature `live`) revalidates
+the endpoint and address policy before each connection, does not follow
+redirects, does not use environment proxies, and bounds the response body.
 
 ## What is out of scope
 
 - Detecting malicious contract logic.
 - Validating that a deployed contract is safe.
-- Trusting or authenticating RPC endpoints (the live transport is not shipped).
+- Trusting or authenticating RPC endpoints (live request authentication is not
+  implemented).
 
 ## Reporting
 
