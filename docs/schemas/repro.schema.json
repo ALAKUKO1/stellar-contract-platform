@@ -1,0 +1,35 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/Tech-Cred/stellar-contract-platform/blob/main/docs/schemas/repro.schema.json",
+  "title": "repro report",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "kind", "tool", "version", "data"],
+  "properties": {
+    "schema_version": { "const": "1.0" },
+    "kind": { "const": "repro" },
+    "tool": { "const": "stellar-contract-platform" },
+    "version": { "type": "string", "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+" },
+    "data": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["env_meta", "build_metadata", "comparison", "source_reproduction"],
+      "properties": {
+        "env_meta": { "type": ["object", "null"] },
+        "build_metadata": { "type": ["object", "null"] },
+        "comparison": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["state", "env_meta_equal", "build_metadata", "detail"],
+          "properties": {
+            "state": { "enum": ["not_compared", "match", "mismatch"] },
+            "env_meta_equal": { "type": ["boolean", "null"] },
+            "build_metadata": { "type": ["object", "null"] },
+            "detail": { "type": "string" }
+          }
+        },
+        "source_reproduction": { "type": "string" }
+      }
+    }
+  }
+}

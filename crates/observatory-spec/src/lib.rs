@@ -63,6 +63,12 @@ pub struct SpecReport {
 }
 
 /// Decode a stream of `SCSpecEntry` values from `bytes`.
+///
+/// The 4-byte `ScSpecEntryKind` discriminant is checked before each entry is
+/// decoded. An unknown kind stops decoding with
+/// [`ObservatoryError::Unsupported`], naming the raw discriminant and the
+/// number of entries decoded before it, so a newer spec stream does not fail as
+/// a malformed one.
 pub fn parse_entries(bytes: &[u8]) -> Result<Vec<ScSpecEntry>> {
     if bytes.len() > MAX_SPEC_SECTION_BYTES {
         return Err(ObservatoryError::spec(format!(
@@ -77,6 +83,21 @@ pub fn parse_entries(bytes: &[u8]) -> Result<Vec<ScSpecEntry>> {
         if entries.len() >= MAX_SPEC_ENTRIES {
             return Err(ObservatoryError::spec(format!(
                 "specification has more than {MAX_SPEC_ENTRIES} entries"
+            )));
+        }
+        let offset = limited.inner.position() as usize;
+        let raw_kind = bytes.get(offset..offset + 4).ok_or_else(|| {
+            ObservatoryError::spec(format!(
+                "truncated spec entry at byte offset {offset}: expected a 4-byte kind"
+            ))
+        })?;
+        let kind = i32::from_be_bytes([raw_kind[0], raw_kind[1], raw_kind[2], raw_kind[3]]);
+        if !(0..=5).contains(&kind) {
+            let decoded = entries.len();
+            let noun = if decoded == 1 { "entry" } else { "entries" };
+            return Err(ObservatoryError::unsupported(format!(
+                "unsupported spec entry kind {kind} at byte offset {offset}; \
+                 {decoded} {noun} decoded before it (expected a kind in 0..=5)"
             )));
         }
         let entry = ScSpecEntry::read_xdr(&mut limited)
@@ -453,7 +474,26 @@ mod tests {
 
     #[test]
     fn malformed_spec_errors() {
-        let error = parse(&[0xff, 0xff, 0xff, 0xff]).unwrap_err();
+        // A known kind followed by a truncated body is malformed, not unsupported.
+        let error = parse(&[0, 0, 0, 0]).unwrap_err();
+        assert!(matches!(error, ObservatoryError::Spec(_)));
+    }
+
+    #[test]
+    fn unknown_entry_kind_is_unsupported_and_reports_decoded_prefix() {
+        let mut bytes = encode_spec_entries(&[spec_function("transfer", &[], None)]);
+        bytes.extend_from_slice(&6i32.to_be_bytes());
+        let error = parse_entries(&bytes).unwrap_err();
+        let ObservatoryError::Unsupported(message) = error else {
+            panic!("expected unsupported error, got {error:?}");
+        };
+        assert!(message.contains("kind 6"), "{message}");
+        assert!(message.contains("1 entry decoded before it"), "{message}");
+    }
+
+    #[test]
+    fn truncated_entry_discriminant_is_a_spec_error() {
+        let error = parse_entries(&[0, 0, 0]).unwrap_err();
         assert!(matches!(error, ObservatoryError::Spec(_)));
     }
 

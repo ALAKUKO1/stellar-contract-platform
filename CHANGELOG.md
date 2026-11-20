@@ -9,6 +9,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Fuzzing: a `wasm_inspect` `cargo-fuzz` target exercising
+  `observatory_wasm::inspect` with a seed corpus. The scheduled workflow runs
+  both fuzz targets and fails when a crash artifact is produced. See
+  `docs/testing.md`.
+- Audit: documented every heuristic rule id in `docs/security.md` with
+  severity, rationale, limitations, and experimental status. A test checks the
+  documented set against the crate's rule registry.
+- Output: JSON Schema documents for every machine-readable report kind under
+  `docs/schemas/`, versioned with `SCHEMA_VERSION`. Tests validate a
+  representative report of each kind and reject invalid instances. See
+  `docs/schemas/README.md`.
 - Fuzzing: a `cargo-fuzz` crate with a `spec_parse` target fuzzing
   `observatory_spec::parse`, a valid seed corpus, and a scheduled nightly
   workflow that uploads crashes. `fuzz/` is not a workspace member, so the
@@ -51,6 +62,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Spec: decoding peeks at the 4-byte `ScSpecEntryKind` discriminant, so an
+  unknown entry kind returns an `unsupported` error naming the kind, offset, and
+  already-decoded entry count instead of a malformed-spec error. See
+  `docs/contract-specifications.md`.
 - CLI: an unsupported `--config` file extension is an unsupported-feature error
   (exit code `5`), not a usage error (`2`).
 

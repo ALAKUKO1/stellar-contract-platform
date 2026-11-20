@@ -1,4 +1,4 @@
-﻿//! Stable report envelope and JSON rendering.
+//! Stable report envelope and JSON rendering.
 //!
 //! Every JSON report is wrapped in an envelope carrying the tool name, version,
 //! report kind, and schema version. This lets automation pin a schema and detect
@@ -154,5 +154,235 @@ mod tests {
         let a = report("x", Payload { answer: 1 }).to_json().unwrap();
         let b = report("x", Payload { answer: 1 }).to_json().unwrap();
         assert_eq!(a, b);
+    }
+
+    const SCHEMA_DIR: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../../docs/schemas");
+
+    fn schema(kind: &str) -> serde_json::Value {
+        let path = format!("{SCHEMA_DIR}/{kind}.schema.json");
+        let text = std::fs::read_to_string(&path).unwrap_or_else(|error| {
+            panic!("cannot read {path}: {error}");
+        });
+        serde_json::from_str(&text)
+            .unwrap_or_else(|error| panic!("invalid JSON in {path}: {error}"))
+    }
+
+    /// One representative instance per published report kind.
+    fn samples() -> Vec<(&'static str, serde_json::Value)> {
+        vec![
+            ("health", serde_json::json!({ "status": "ok" })),
+            (
+                "readiness",
+                serde_json::json!({ "status": "ready", "auth_required": true }),
+            ),
+            (
+                "version",
+                serde_json::json!({
+                    "tool": TOOL_NAME,
+                    "version": "0.1.0",
+                    "schema_version": SCHEMA_VERSION,
+                    "api_version": "v1",
+                }),
+            ),
+            (
+                "metrics",
+                serde_json::json!({
+                    "requests_total": 42,
+                    "analyses_total": 7,
+                    "errors_total": 3,
+                    "rate_limited_total": 0,
+                }),
+            ),
+            (
+                "inspect",
+                serde_json::json!({ "wasm": {}, "interface": null, "audit": null }),
+            ),
+            ("spec", serde_json::json!({ "spec": {}, "summary": {} })),
+            (
+                "spec.function",
+                serde_json::json!({ "function": {}, "summary": {} }),
+            ),
+            (
+                "spec.type",
+                serde_json::json!({
+                    "structs": [],
+                    "unions": [],
+                    "enums": [],
+                    "error_enums": [],
+                }),
+            ),
+            (
+                "events",
+                serde_json::json!({ "total": 1, "returned": 1, "events": [] }),
+            ),
+            (
+                "diff",
+                serde_json::json!({
+                    "changes": [],
+                    "summary": { "breaking": 0, "non_breaking": 0, "informational": 0 },
+                }),
+            ),
+            (
+                "compat",
+                serde_json::json!({
+                    "status": "compatible",
+                    "policy": {},
+                    "reasons": [],
+                    "diff": {},
+                }),
+            ),
+            (
+                "fingerprint",
+                serde_json::json!({
+                    "artifact_sha256": "a".repeat(64),
+                    "interface_sha256": null,
+                }),
+            ),
+            (
+                "security",
+                serde_json::json!({ "status": "PASS", "findings": [] }),
+            ),
+            (
+                "deployment",
+                serde_json::json!({
+                    "contract_id": "C...",
+                    "wasm_hash": null,
+                    "last_modified_ledger_seq": null,
+                    "live_until_ledger_seq": null,
+                    "found": false,
+                }),
+            ),
+            (
+                "verify",
+                serde_json::json!({
+                    "status": "MATCH",
+                    "contract_id": "C...",
+                    "network": "testnet",
+                    "local_wasm_hash": "aa",
+                    "deployed_wasm_hash": "aa",
+                    "detail": "hashes match",
+                }),
+            ),
+            (
+                "verify.interface",
+                serde_json::json!({
+                    "artifact": {
+                        "status": "MATCH",
+                        "contract_id": "C...",
+                        "network": "testnet",
+                        "local_wasm_hash": "aa",
+                        "deployed_wasm_hash": "aa",
+                        "detail": "hashes match",
+                    },
+                    "interface_match": true,
+                    "local_interface_sha256": null,
+                    "deployed_interface_sha256": null,
+                    "diff": null,
+                    "compatibility": null,
+                    "source_verification": "not_performed",
+                    "detail": "interfaces are identical",
+                }),
+            ),
+            (
+                "verify.metadata",
+                serde_json::json!({ "entries": { "build": "soroban" } }),
+            ),
+            (
+                "verify.compare",
+                serde_json::json!({ "equal": true, "compared_keys": 1, "differences": [] }),
+            ),
+            (
+                "repro",
+                serde_json::json!({
+                    "env_meta": null,
+                    "build_metadata": null,
+                    "comparison": {
+                        "state": "not_compared",
+                        "env_meta_equal": null,
+                        "build_metadata": null,
+                        "detail": "no reference artifact supplied",
+                    },
+                    "source_reproduction": "not_performed",
+                }),
+            ),
+            (
+                "doctor",
+                serde_json::json!({
+                    "tool": TOOL_NAME,
+                    "version": "0.1.0",
+                    "schema_version": SCHEMA_VERSION,
+                    "capabilities": ["inspect"],
+                    "rpc_transport": "fixture/mock only",
+                    "networks": [{
+                        "name": "testnet",
+                        "passphrase": "Test SDF Network ; September 2015",
+                        "default_rpc_url": "https://soroban-testnet.stellar.org",
+                    }],
+                }),
+            ),
+        ]
+    }
+
+    #[test]
+    fn every_report_kind_validates_against_its_schema() {
+        let mut kinds: Vec<String> = std::fs::read_dir(SCHEMA_DIR)
+            .expect("read docs/schemas")
+            .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
+            .filter_map(|name| name.strip_suffix(".schema.json").map(str::to_string))
+            .collect();
+        kinds.sort_unstable();
+
+        let mut tested: Vec<String> = Vec::new();
+        for (kind, data) in samples() {
+            let schema = schema(kind);
+            assert_eq!(
+                schema["properties"]["schema_version"]["const"],
+                SCHEMA_VERSION
+            );
+            assert_eq!(schema["properties"]["kind"]["const"], kind);
+            assert_eq!(schema["properties"]["tool"]["const"], TOOL_NAME);
+
+            let instance = serde_json::to_value(report(kind, data)).unwrap();
+            let validator = jsonschema::validator_for(&schema)
+                .unwrap_or_else(|error| panic!("invalid schema for {kind}: {error}"));
+            assert!(
+                validator.is_valid(&instance),
+                "representative `{kind}` output failed validation: {instance}"
+            );
+            tested.push(kind.to_string());
+        }
+        tested.push("error".to_string());
+        tested.sort_unstable();
+        assert_eq!(
+            tested, kinds,
+            "a schema document has no representative sample"
+        );
+
+        let error_schema = schema("error");
+        assert_eq!(
+            error_schema["properties"]["schema_version"]["const"],
+            SCHEMA_VERSION
+        );
+        let error_instance =
+            serde_json::to_value(ErrorReport::from_error(&ObservatoryError::wasm("bad"))).unwrap();
+        assert!(jsonschema::validator_for(&error_schema)
+            .unwrap()
+            .is_valid(&error_instance));
+    }
+
+    #[test]
+    fn invalid_reports_fail_validation() {
+        let schema = schema("inspect");
+        let validator = jsonschema::validator_for(&schema).unwrap();
+        let missing_data = serde_json::json!({
+            "schema_version": SCHEMA_VERSION,
+            "kind": "inspect",
+            "tool": TOOL_NAME,
+            "version": "0.1.0",
+        });
+        assert!(!validator.is_valid(&missing_data));
+
+        let wrong_kind = serde_json::to_value(report("diff", Payload { answer: 1 })).unwrap();
+        assert!(!validator.is_valid(&wrong_kind));
     }
 }

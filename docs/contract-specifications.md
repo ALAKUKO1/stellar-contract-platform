@@ -44,5 +44,11 @@ Supported: all `SCSpecEntry` variants in the Stellar XDR schema used by this
 project (`FunctionV0`, `UdtStructV0`, `UdtUnionV0`, `UdtEnumV0`,
 `UdtErrorEnumV0`, `EventV0`).
 
-If a future XDR schema adds an entry kind, decoding that stream will fail with a
-structured error rather than silently dropping data.
+If a future XDR schema adds an entry kind, decoding peeks at the 4-byte
+`ScSpecEntryKind` discriminant before decoding an entry. An unknown kind stops
+decoding and returns an `unsupported` error naming the raw discriminant, its
+byte offset, and how many entries were decoded before it. This keeps newer spec
+streams from being reported as malformed. Entries decoded before the unknown
+kind are included in the error message as that count; later entries are not
+decoded. All other malformed input (a truncated discriminant or body) still
+returns a `spec` error.
