@@ -4,6 +4,7 @@
 //! typo cannot silently disable a setting. The schema is intentionally small and
 //! only exposes settings that the implementation actually honours.
 
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use observatory_core::{ObservatoryError, Result};
@@ -102,6 +103,9 @@ pub struct ApiSection {
     /// Optional rate-limit override.
     #[serde(default)]
     pub rate_limit: Option<RateLimitSection>,
+    /// Optional per-route limits, keyed by exact request path.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub route_limits: BTreeMap<String, RateLimitSection>,
     /// Optional CORS policy; an empty allow-list denies every cross-origin call.
     #[serde(default)]
     pub cors: CorsSection,
@@ -116,6 +120,7 @@ impl Default for ApiSection {
         ApiSection {
             require_auth: true,
             rate_limit: None,
+            route_limits: BTreeMap::new(),
             cors: CorsSection::default(),
         }
     }
@@ -249,6 +254,24 @@ impl ProjectConfig {
                 window_secs: section.window_secs,
             })
             .unwrap_or_default()
+    }
+
+    /// Resolve per-route rate-limit overrides, keyed by exact request path.
+    #[must_use]
+    pub fn route_limits(&self) -> BTreeMap<String, RateLimitConfig> {
+        self.api
+            .route_limits
+            .iter()
+            .map(|(path, section)| {
+                (
+                    path.clone(),
+                    RateLimitConfig {
+                        limit: section.limit,
+                        window_secs: section.window_secs,
+                    },
+                )
+            })
+            .collect()
     }
 
     /// Resolve the default network label, if configured.

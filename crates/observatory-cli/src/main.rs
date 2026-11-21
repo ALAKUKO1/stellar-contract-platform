@@ -615,6 +615,7 @@ fn run(cli: &Cli, format: OutputFormat) -> Result<ObservatoryExit> {
                         project.rate_limit().window_secs
                     },
                 },
+                route_limits: project.route_limits(),
                 cors: project.cors(),
             };
             let api = observatory_api::Api::new(config);

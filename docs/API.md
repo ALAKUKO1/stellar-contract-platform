@@ -35,7 +35,9 @@ X-API-Key: sco_<id>_<secret>
 ```
 
 Keys are random; only a SHA-256 hash is stored, and the hash is never returned.
-The plaintext is shown exactly once at creation.
+The plaintext is shown exactly once at creation. The default store is in memory;
+a `FileKeyStore` persists only ids, hashes, roles, labels, and revocation state,
+so keys survive a restart without ever writing the plaintext to disk.
 
 | Status | Body `code` | Meaning |
 | ------ | ----------- | ------- |
@@ -76,7 +78,8 @@ flag (`api serve --max-connections 64 --read-timeout-secs 10 ...`) and mirrors
 
 ## Rate limiting
 
-Fixed-window, keyed by API-key id (or client IP when unauthenticated).
+Fixed-window, keyed by API-key id (or client IP when unauthenticated) **and** the
+request path, so every endpoint has its own window.
 
 ```
 X-RateLimit-Limit: 120
@@ -84,8 +87,11 @@ X-RateLimit-Remaining: 119
 X-RateLimit-Reset: 60
 ```
 
-Exceeding the limit returns `429` with `code: "rate_limited"`. Limits are
-configurable via `PlatformConfig` (`rate_limit.limit`, `rate_limit.window_secs`).
+Exceeding the limit returns `429` with `code: "rate_limited"`. The default is
+`PlatformConfig.rate_limit`. A stricter limit for one route does not affect the
+others: set `PlatformConfig.route_limits["<exact path>"]` (or
+`api.route_limits` in the project file). The headers always report the effective
+limit for the request's route.
 
 ## Request IDs
 
@@ -122,6 +128,19 @@ Counters are process-local and monotonic. They cover every handled request,
 successful contract analyses, responses with a `4xx`/`5xx` status, and requests
 rejected by the rate limiter. The exposition is deterministic and contains no
 secrets.
+
+### `POST /api/v1/keys` (admin)
+Creates an API key. Requires `manage_keys`.
+Body: `{ "role": "viewer|developer|maintainer|admin", "label": "ci" }`.
+The response (`201`) contains the plaintext exactly once; listing never returns it.
+
+### `GET /api/v1/keys` (admin)
+Lists key metadata (id, role, label, revocation state). Requires `manage_keys`.
+Hashes, secrets, and plaintext are never included.
+
+### `DELETE /api/v1/keys/{id}` (admin)
+Revokes a key. Requires `manage_keys`. Revocation takes effect immediately; the
+next request with that key receives `401`. An unknown id returns `404`.
 
 ### `POST /api/v1/contracts/inspect`
 Body: `{ "wasm_base64": "...", "security": false }`.
@@ -202,6 +221,16 @@ Supported events are `analysis_completed`, `analysis_failed`, and
 `deployment_verified`. The response includes a random `secret` exactly once; it
 is never returned by list or get.
 
+### Signed webhook delivery
+
+`observatory_platform::deliver` signs an event and delivers it with bounded
+retries. The signature is HMAC-SHA256 over `<timestamp>.<body>`, sent as
+`X-Observatory-Signature: sha256=<hex>` with `X-Observatory-Timestamp`,
+`X-Observatory-Event`, and a stable `X-Observatory-Delivery-Id`. Transient
+failures (`408`, `429`, `5xx`, and transport errors) are retried with
+exponential backoff; other `4xx` responses are not. See
+[webhooks.md](webhooks.md) for verification steps.
+
 ## Response envelope
 
 Success:
@@ -229,6 +258,7 @@ See [`rpc-errors.md`](rpc-errors.md) for the full taxonomy.
 | Status | Meaning |
 | ------ | ------- |
 | 200 | success |
+| 201 | resource created (API key) |
 | 400 | invalid request or artifact |
 | 401 | authentication required or invalid |
 | 403 | authenticated but not permitted |
@@ -262,5 +292,6 @@ Typed Rust and TypeScript clients live under `crates/observatory-client` and
 
 - Deployment/verification endpoints over live RPC (blocked on the live
   transport, issue #13).
-- Durable persistence of keys, users, webhooks, jobs, or audit events across
-  restarts (the in-process stores are bounded and reset with the process).
+- Persistence of users, webhooks, jobs, or audit events across restarts.
+  API-key persistence is available through `FileKeyStore`; the default remains
+  in memory.
