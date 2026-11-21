@@ -65,6 +65,7 @@ pub struct AuditReport {
 /// `docs/security.md` documents each one; a test asserts the two stay in sync.
 pub const RULE_IDS: &[&str] = &[
     "artifact.duplicate-metadata-section",
+    "artifact.memory64",
     "artifact.metadata-without-code",
     "artifact.metadata-without-contract-spec",
     "artifact.no-code",
@@ -358,6 +359,17 @@ pub fn audit_artifact(report: &WasmReport) -> AuditReport {
             id: "artifact.no-memory".to_string(),
             severity: FindingSeverity::Warn,
             message: "module declares no linear memory".to_string(),
+            path: None,
+            experimental: true,
+        });
+    }
+    if report.memories.iter().any(|memory| memory.memory64) {
+        findings.push(Finding {
+            id: "artifact.memory64".to_string(),
+            severity: FindingSeverity::Warn,
+            message: "module declares a 64-bit memory (memory64 proposal); Soroban \
+                      contracts use 32-bit linear memory"
+                .to_string(),
             path: None,
             experimental: true,
         });

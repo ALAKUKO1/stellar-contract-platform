@@ -22,6 +22,12 @@ pub use model::{
     SpecFunction, SpecParam, SpecStruct, SpecType, SpecUnion, SpecUnionCase,
 };
 
+/// Maximum byte length of a specification symbol or declared name.
+///
+/// Soroban specification names are XDR `SCSymbol` values, which are limited to
+/// 32 bytes.
+pub const MAX_SYMBOL_BYTES: usize = 32;
+
 /// Severity of a specification validation issue.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -313,7 +319,60 @@ pub fn validate(spec: &ContractSpec) -> Vec<SpecIssue> {
         }
     }
 
+    for function in &spec.functions {
+        check_name_length(&mut issues, "function", &function.name);
+        for input in &function.inputs {
+            check_name_length(&mut issues, "parameter", &input.name);
+        }
+    }
+    for item in &spec.structs {
+        check_name_length(&mut issues, "struct", &item.name);
+        for field in &item.fields {
+            check_name_length(&mut issues, "field", &field.name);
+        }
+    }
+    for item in &spec.unions {
+        check_name_length(&mut issues, "union", &item.name);
+        for case in &item.cases {
+            check_name_length(&mut issues, "union case", &case.name);
+        }
+    }
+    for item in &spec.enums {
+        check_name_length(&mut issues, "enum", &item.name);
+        for case in &item.cases {
+            check_name_length(&mut issues, "enum case", &case.name);
+        }
+    }
+    for item in &spec.error_enums {
+        check_name_length(&mut issues, "error enum", &item.name);
+        for case in &item.cases {
+            check_name_length(&mut issues, "error case", &case.name);
+        }
+    }
+    for event in &spec.events {
+        check_name_length(&mut issues, "event", &event.name);
+        for topic in &event.prefix_topics {
+            check_name_length(&mut issues, "event topic", topic);
+        }
+        for param in &event.params {
+            check_name_length(&mut issues, "event parameter", &param.name);
+        }
+    }
+
     issues
+}
+
+/// Report a name that exceeds the XDR `SCSymbol` length limit.
+fn check_name_length(issues: &mut Vec<SpecIssue>, kind: &str, name: &str) {
+    if name.len() > MAX_SYMBOL_BYTES {
+        issues.push(SpecIssue {
+            severity: SpecSeverity::Error,
+            message: format!(
+                "{kind} name `{name}` is {} bytes; the maximum is {MAX_SYMBOL_BYTES}",
+                name.len()
+            ),
+        });
+    }
 }
 
 /// Summarize a specification into counts plus validation issues.
@@ -511,6 +570,25 @@ mod tests {
         assert!(issues
             .iter()
             .any(|issue| issue.message.contains("unknown type `Missing`")));
+    }
+
+    #[test]
+    fn validation_flags_overlong_symbol_names() {
+        let spec = ContractSpec {
+            functions: vec![SpecFunction {
+                name: "a".repeat(MAX_SYMBOL_BYTES + 1),
+                doc: String::new(),
+                inputs: Vec::new(),
+                outputs: Vec::new(),
+            }],
+            ..ContractSpec::default()
+        };
+        let issues = validate(&spec);
+        assert!(issues.iter().any(|issue| {
+            issue.severity == SpecSeverity::Error
+                && issue.message.contains("maximum is 32")
+                && issue.message.contains("function name")
+        }));
     }
 
     #[test]

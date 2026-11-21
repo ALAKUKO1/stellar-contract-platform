@@ -18,10 +18,11 @@
 | `element_segment_count` | Number of element segments. |
 | `element_segments` | Bounded per-segment item counts. |
 | `tables` | Element type, initial size, and maximum size. |
-| `memories` | Initial/maximum pages and shared flag. |
+| `memories` | Initial/maximum pages, shared flag, and the `memory64` flag. |
 | `imports` | Module, name, and kind, in module order. |
 | `exports` | Name and kind, in module order. |
 | `custom_sections` | Name and payload size, in module order. |
+| `producers` | Build provenance from the `producers` section (`language`, `processed-by`, `sdk`), when present and valid. |
 | `code_section_bytes` | Size of the code section. |
 | `has_contract_spec` | Whether `contractspecv0` is present. |
 | `contract_spec_bytes` | Size of that section, if present. |
@@ -35,6 +36,12 @@
   `truncated` reports clipping. Counts are still read from section headers, so
   they stay exact when a summary list is clipped.
 - Malformed input returns a structured error (`wasm error`).
+- The `producers` section is decoded into bounded lists (at most
+  `MAX_PRODUCER_ENTRIES` entries across all categories); its absence is not an
+  error, and tool names are preserved verbatim.
+- A 64-bit linear memory (`memory64` proposal) is reported rather than rejected.
+  Soroban contracts target 32-bit linear memory, so `inspect --security` warns
+  on `artifact.memory64`.
 
 ## Ordering
 

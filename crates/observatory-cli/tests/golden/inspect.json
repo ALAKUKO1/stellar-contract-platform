@@ -66,6 +66,7 @@
       "has_contract_spec": true,
       "imports": [],
       "memories": [],
+      "producers": null,
       "size_bytes": 162,
       "start": null,
       "table_count": 0,

@@ -36,7 +36,12 @@ Types (`SpecType`) cover the full `SCSpecTypeDef` surface: primitives
 - duplicate user-defined type names,
 - references to unknown types,
 - more than one return type on a function,
+- names longer than the XDR `SCSymbol` limit of 32 bytes,
 - duplicate event names (warning).
+
+Name-length validation covers function and parameter names, user-defined type
+names and their fields/cases, and event names, topics, and parameters. Overlong
+names are reported, never silently truncated.
 
 ## Supported and unsupported
 

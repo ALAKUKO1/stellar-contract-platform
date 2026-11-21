@@ -14,6 +14,13 @@ Fingerprints provide stable identity for artifacts and interfaces.
 `fingerprint <wasm>` prints the SHA-256 of the artifact bytes. This is the same
 value used by `verify artifact`.
 
+The CLI streams the file through a bounded buffer
+(`observatory_wasm::artifact_fingerprint_file`) instead of loading it whole, so
+peak memory stays constant regardless of artifact size. The digest is identical
+to hashing the full contents at once. The interface fingerprint still needs the
+artifact in memory; when an artifact exceeds the load bound it is omitted while
+the artifact fingerprint is still reported.
+
 ## Interface fingerprint
 
 When a `contractspecv0` section is present, the canonical interface is serialized
