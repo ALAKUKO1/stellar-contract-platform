@@ -11,12 +11,15 @@ use observatory_core::{ObservatoryError, Result as CoreResult, SCHEMA_VERSION, T
 use observatory_output::report;
 use observatory_platform::{
     authorize, ApiKeyStore, CompatibilityPolicy, Observatory, Permission, PlatformConfig,
-    Principal, RateLimiter, Role,
+    Principal, RateLimiter, Role, WebhookEvent, WebhookStore,
 };
 use serde::Serialize;
 use serde_json::Value;
 
-use crate::dto::{decode_wasm, CompatibilityRequest, DiffRequest, InspectRequest, WasmRequest};
+use crate::dto::{
+    decode_wasm, CompatibilityRequest, CreateWebhookRequest, DiffRequest, InspectRequest,
+    UpdateWebhookRequest, WasmRequest,
+};
 use crate::http::{Request, Response};
 use crate::metrics::{self, Metrics};
 
@@ -39,6 +42,11 @@ pub const ROUTES: &[(&str, &str)] = &[
     ("POST", "/api/v1/contracts/compatibility"),
     ("POST", "/api/v1/contracts/fingerprint"),
     ("POST", "/api/v1/contracts/security"),
+    ("POST", "/api/v1/webhooks"),
+    ("GET", "/api/v1/webhooks"),
+    ("GET", "/api/v1/webhooks/{id}"),
+    ("PATCH", "/api/v1/webhooks/{id}"),
+    ("DELETE", "/api/v1/webhooks/{id}"),
 ];
 
 /// An API error with an HTTP status and a stable code.
@@ -102,6 +110,7 @@ impl From<ObservatoryError> for ApiError {
 pub struct Api {
     observatory: Observatory,
     keys: RwLock<ApiKeyStore>,
+    webhooks: RwLock<WebhookStore>,
     limiter: RateLimiter,
     config: PlatformConfig,
     counter: AtomicU64,
@@ -116,6 +125,7 @@ impl Api {
         Api {
             observatory: Observatory::new(),
             keys: RwLock::new(ApiKeyStore::new()),
+            webhooks: RwLock::new(WebhookStore::new()),
             limiter,
             config,
             counter: AtomicU64::new(0),
@@ -178,6 +188,8 @@ impl Api {
 
         let mut response = if !decision.allowed {
             error_response(429, "rate_limited", "rate limit exceeded")
+        } else if request.method == "OPTIONS" {
+            self.preflight(request)
         } else {
             match self.route(request, principal.as_ref()) {
                 Ok(response) => response,
@@ -202,7 +214,46 @@ impl Api {
             "X-RateLimit-Reset".to_string(),
             decision.reset_after_secs.to_string(),
         ));
+        response.headers.extend(self.cors_headers(request));
         response
+    }
+
+    fn preflight(&self, request: &Request) -> Response {
+        let Some(origin) = request.header("origin") else {
+            return error_response(400, "bad_request", "preflight requires an Origin header");
+        };
+        if !self.config.cors.is_allowed_origin(origin) {
+            return error_response(403, "cors_origin_denied", "origin is not allowed");
+        }
+        Response::empty(204)
+    }
+
+    fn cors_headers(&self, request: &Request) -> Vec<(String, String)> {
+        let Some(origin) = request.header("origin") else {
+            return Vec::new();
+        };
+        if !self.config.cors.is_allowed_origin(origin) {
+            return Vec::new();
+        }
+        let mut headers = vec![
+            (
+                "Access-Control-Allow-Origin".to_string(),
+                origin.to_string(),
+            ),
+            ("Vary".to_string(), "Origin".to_string()),
+        ];
+        if request.method == "OPTIONS" {
+            headers.push((
+                "Access-Control-Allow-Methods".to_string(),
+                self.config.cors.methods().join(", "),
+            ));
+            headers.push((
+                "Access-Control-Allow-Headers".to_string(),
+                self.config.cors.headers().join(", "),
+            ));
+            headers.push(("Access-Control-Max-Age".to_string(), "600".to_string()));
+        }
+        headers
     }
 
     fn principal(&self, request: &Request) -> Option<Principal> {
@@ -240,6 +291,12 @@ impl Api {
         request: &Request,
         principal: Option<&Principal>,
     ) -> Result<Response, ApiError> {
+        if request.path == "/api/v1/webhooks" {
+            return self.route_webhooks(request, principal);
+        }
+        if let Some(id) = request.path.strip_prefix("/api/v1/webhooks/") {
+            return self.route_webhook_item(request, principal, id);
+        }
         match (request.method.as_str(), request.path.as_str()) {
             ("GET", "/api/v1/health") => Ok(response(
                 200,
@@ -352,6 +409,113 @@ impl Api {
             }
         }
     }
+
+    fn route_webhooks(
+        &self,
+        request: &Request,
+        principal: Option<&Principal>,
+    ) -> Result<Response, ApiError> {
+        self.require(principal, Permission::ManageWebhooks)?;
+        match request.method.as_str() {
+            "POST" => {
+                let body: CreateWebhookRequest = parse_json(request)?;
+                let events = parse_webhook_events(&body.events)?;
+                let created = self
+                    .webhooks
+                    .write()
+                    .expect("webhook store poisoned")
+                    .create(&body.url, &events)
+                    .map_err(ApiError::from)?;
+                Ok(response(201, "webhook", &created))
+            }
+            "GET" => {
+                let subscriptions = self.webhooks.read().expect("webhook store poisoned").list();
+                Ok(response(200, "webhooks", &subscriptions))
+            }
+            _ => Err(method_not_allowed()),
+        }
+    }
+
+    fn route_webhook_item(
+        &self,
+        request: &Request,
+        principal: Option<&Principal>,
+        id: &str,
+    ) -> Result<Response, ApiError> {
+        if id.is_empty() || id.contains('/') {
+            return Err(webhook_not_found());
+        }
+        self.require(principal, Permission::ManageWebhooks)?;
+        match request.method.as_str() {
+            "GET" => {
+                let subscription = self
+                    .webhooks
+                    .read()
+                    .expect("webhook store poisoned")
+                    .get(id);
+                subscription
+                    .map(|subscription| response(200, "webhook", &subscription))
+                    .ok_or_else(webhook_not_found)
+            }
+            "PATCH" => {
+                let body: UpdateWebhookRequest = parse_json(request)?;
+                let events = match body.events.as_deref() {
+                    Some(values) => Some(parse_webhook_events(values)?),
+                    None => None,
+                };
+                let updated = self
+                    .webhooks
+                    .write()
+                    .expect("webhook store poisoned")
+                    .update(id, body.url.as_deref(), events.as_deref(), body.active)
+                    .map_err(ApiError::from)?;
+                updated
+                    .map(|subscription| response(200, "webhook", &subscription))
+                    .ok_or_else(webhook_not_found)
+            }
+            "DELETE" => {
+                let removed = self
+                    .webhooks
+                    .write()
+                    .expect("webhook store poisoned")
+                    .delete(id);
+                if removed {
+                    Ok(response(
+                        200,
+                        "webhook_deleted",
+                        &serde_json::json!({ "id": id, "deleted": true }),
+                    ))
+                } else {
+                    Err(webhook_not_found())
+                }
+            }
+            _ => Err(method_not_allowed()),
+        }
+    }
+}
+
+fn method_not_allowed() -> ApiError {
+    ApiError::new(
+        405,
+        "method_not_allowed",
+        "method not allowed for this path",
+    )
+}
+
+fn webhook_not_found() -> ApiError {
+    ApiError::new(404, "not_found", "unknown webhook subscription")
+}
+
+fn parse_webhook_events(values: &[String]) -> Result<Vec<WebhookEvent>, ApiError> {
+    if values.is_empty() {
+        return Err(ApiError::bad_request(
+            "a webhook subscription must select at least one event",
+        ));
+    }
+    values
+        .iter()
+        .map(|value| WebhookEvent::parse(value).map_err(ApiError::from))
+        .collect()
 }
 
 fn wants_json(request: &Request) -> bool {
@@ -556,6 +720,7 @@ mod tests {
                 limit: 1,
                 window_secs: 60,
             },
+            cors: observatory_platform::CorsConfig::default(),
         };
         let api = Api::new(config);
         assert_eq!(api.handle(&get("/api/v1/health"), "ip", 0).status, 200);
@@ -668,5 +833,173 @@ mod tests {
         let text = String::from_utf8(api.handle(&get(METRICS_PATH), "ip", 0).body).unwrap();
         assert!(!text.contains(&key));
         assert!(!text.contains("sco_"));
+    }
+
+    fn maintainer_api() -> (Api, String) {
+        let api = Api::new(PlatformConfig::default());
+        let key = api.generate_key(Role::Maintainer, "hooks").unwrap();
+        (api, key)
+    }
+
+    fn webhook_body() -> Value {
+        serde_json::json!({
+            "url": "https://example.com/hook",
+            "events": ["analysis_completed", "analysis_failed"]
+        })
+    }
+
+    fn created_id(response: &Response) -> String {
+        let value: Value = serde_json::from_slice(&response.body).unwrap();
+        value["data"]["id"].as_str().unwrap().to_string()
+    }
+
+    #[test]
+    fn maintainer_can_manage_webhooks() {
+        let (api, key) = maintainer_api();
+        let create = with_key(post("/api/v1/webhooks", webhook_body()), &key);
+        let response = api.handle(&create, "ip", 0);
+        assert_eq!(response.status, 201);
+        let body = String::from_utf8_lossy(&response.body);
+        assert!(body.contains("\"secret\""));
+        let id = created_id(&response);
+
+        let get = with_key(get_request(&format!("/api/v1/webhooks/{id}")), &key);
+        let got = api.handle(&get, "ip", 0);
+        assert_eq!(got.status, 200);
+        assert!(!String::from_utf8_lossy(&got.body).contains("\"secret\""));
+
+        let list = with_key(get_request("/api/v1/webhooks"), &key);
+        let listed = api.handle(&list, "ip", 0);
+        assert_eq!(listed.status, 200);
+        assert!(!String::from_utf8_lossy(&listed.body).contains("\"secret\""));
+
+        let mut patch = post(
+            &format!("/api/v1/webhooks/{id}"),
+            serde_json::json!({ "active": false }),
+        );
+        patch.method = "PATCH".to_string();
+        let patched = api.handle(&with_key(patch, &key), "ip", 0);
+        assert_eq!(patched.status, 200);
+        assert!(String::from_utf8_lossy(&patched.body).contains("\"active\":false"));
+
+        let mut delete = get_request(&format!("/api/v1/webhooks/{id}"));
+        delete.method = "DELETE".to_string();
+        assert_eq!(api.handle(&with_key(delete, &key), "ip", 0).status, 200);
+        let mut again = get_request(&format!("/api/v1/webhooks/{id}"));
+        again.method = "DELETE".to_string();
+        assert_eq!(api.handle(&with_key(again, &key), "ip", 0).status, 404);
+    }
+
+    #[test]
+    fn webhook_registration_rejects_invalid_urls() {
+        let (api, key) = maintainer_api();
+        let request = with_key(
+            post(
+                "/api/v1/webhooks",
+                serde_json::json!({ "url": "http://internal/hook", "events": ["analysis_completed"] }),
+            ),
+            &key,
+        );
+        assert_eq!(api.handle(&request, "ip", 0).status, 400);
+
+        let request = with_key(
+            post(
+                "/api/v1/webhooks",
+                serde_json::json!({ "url": "https://user:pass@example.com", "events": ["analysis_completed"] }),
+            ),
+            &key,
+        );
+        assert_eq!(api.handle(&request, "ip", 0).status, 400);
+    }
+
+    #[test]
+    fn webhook_registration_requires_permission() {
+        let (api, key) = api_with_developer();
+        let request = with_key(post("/api/v1/webhooks", webhook_body()), &key);
+        assert_eq!(api.handle(&request, "ip", 0).status, 403);
+    }
+
+    fn get_request(path: &str) -> Request {
+        get(path)
+    }
+
+    fn cors_api(origins: &[&str]) -> Api {
+        let mut config = PlatformConfig::default();
+        config.cors.allowed_origins = origins.iter().map(|origin| (*origin).to_string()).collect();
+        Api::new(config)
+    }
+
+    fn with_origin(mut request: Request, origin: &str) -> Request {
+        request
+            .headers
+            .insert("origin".to_string(), origin.to_string());
+        request
+    }
+
+    fn header_value<'a>(response: &'a Response, name: &str) -> Option<&'a str> {
+        response
+            .headers
+            .iter()
+            .find(|(header, _)| header.eq_ignore_ascii_case(name))
+            .map(|(_, value)| value.as_str())
+    }
+
+    #[test]
+    fn cors_denies_cross_origin_by_default() {
+        let api = Api::new(PlatformConfig::default());
+        let request = with_origin(get("/api/v1/health"), "https://app.example.com");
+        let response = api.handle(&request, "ip", 0);
+        assert_eq!(response.status, 200);
+        assert!(header_value(&response, "Access-Control-Allow-Origin").is_none());
+    }
+
+    #[test]
+    fn cors_echoes_allowed_origins_only() {
+        let api = cors_api(&["https://app.example.com"]);
+        let allowed = with_origin(get("/api/v1/health"), "https://app.example.com");
+        let response = api.handle(&allowed, "ip", 0);
+        assert_eq!(
+            header_value(&response, "Access-Control-Allow-Origin"),
+            Some("https://app.example.com")
+        );
+
+        let denied = with_origin(get("/api/v1/health"), "https://evil.example.com");
+        let response = api.handle(&denied, "ip", 0);
+        assert!(header_value(&response, "Access-Control-Allow-Origin").is_none());
+    }
+
+    #[test]
+    fn cors_preflight_for_allowed_origin() {
+        let api = cors_api(&["https://app.example.com"]);
+        let mut request = get("/api/v1/contracts/inspect");
+        request.method = "OPTIONS".to_string();
+        request
+            .headers
+            .insert("origin".to_string(), "https://app.example.com".to_string());
+        request.headers.insert(
+            "access-control-request-method".to_string(),
+            "POST".to_string(),
+        );
+        let response = api.handle(&request, "ip", 0);
+        assert_eq!(response.status, 204);
+        assert_eq!(
+            header_value(&response, "Access-Control-Allow-Origin"),
+            Some("https://app.example.com")
+        );
+        assert!(header_value(&response, "Access-Control-Allow-Methods").is_some());
+        assert!(header_value(&response, "Access-Control-Allow-Credentials").is_none());
+    }
+
+    #[test]
+    fn cors_preflight_for_disallowed_origin() {
+        let api = cors_api(&["https://app.example.com"]);
+        let mut request = get("/api/v1/contracts/inspect");
+        request.method = "OPTIONS".to_string();
+        request
+            .headers
+            .insert("origin".to_string(), "https://evil.example.com".to_string());
+        let response = api.handle(&request, "ip", 0);
+        assert_eq!(response.status, 403);
+        assert!(header_value(&response, "Access-Control-Allow-Origin").is_none());
     }
 }

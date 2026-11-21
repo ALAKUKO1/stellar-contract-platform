@@ -24,6 +24,7 @@ fn start_server(limit: u32) -> SocketAddr {
             limit,
             window_secs: 60,
         },
+        cors: observatory_platform::CorsConfig::default(),
     };
     let listener = TcpListener::bind("127.0.0.1:0").expect("bind loopback");
     let addr = listener.local_addr().expect("local address");

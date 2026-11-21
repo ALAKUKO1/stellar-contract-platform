@@ -17,5 +17,5 @@ pub mod openapi;
 
 pub use api::{Api, ApiError, API_PREFIX, METRICS_PATH, ROUTES};
 pub use dto::{CompatibilityRequest, DiffRequest, InspectRequest, WasmRequest};
-pub use http::{Request, Response};
+pub use http::{HttpLimits, Request, Response};
 pub use metrics::{Metrics, MetricsSnapshot};

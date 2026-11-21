@@ -235,6 +235,27 @@ enum ApiCommand {
         /// Register a key as ROLE:PLAINTEXT (repeatable), for example developer:sco_...
         #[arg(long = "key")]
         keys: Vec<String>,
+        /// Maximum concurrent in-flight connections.
+        #[arg(long, default_value_t = 64)]
+        max_connections: usize,
+        /// Socket read timeout in seconds.
+        #[arg(long, default_value_t = 10)]
+        read_timeout_secs: u64,
+        /// Socket write timeout in seconds.
+        #[arg(long, default_value_t = 10)]
+        write_timeout_secs: u64,
+        /// Maximum request line size in bytes.
+        #[arg(long, default_value_t = 8 * 1024)]
+        max_request_line_bytes: usize,
+        /// Maximum single header line size in bytes.
+        #[arg(long, default_value_t = 8 * 1024)]
+        max_header_line_bytes: usize,
+        /// Maximum number of header lines.
+        #[arg(long, default_value_t = 100)]
+        max_headers: usize,
+        /// Maximum request body size in bytes.
+        #[arg(long, default_value_t = 8 * 1024 * 1024)]
+        max_body_bytes: usize,
     },
     /// Print the OpenAPI document.
     Openapi,
@@ -567,6 +588,13 @@ fn run(cli: &Cli, format: OutputFormat) -> Result<ObservatoryExit> {
             rate_limit,
             window_secs,
             keys,
+            max_connections,
+            read_timeout_secs,
+            write_timeout_secs,
+            max_request_line_bytes,
+            max_header_line_bytes,
+            max_headers,
+            max_body_bytes,
         }) => {
             let config = observatory_platform::PlatformConfig {
                 require_auth: if *no_auth {
@@ -582,6 +610,7 @@ fn run(cli: &Cli, format: OutputFormat) -> Result<ObservatoryExit> {
                         project.rate_limit().window_secs
                     },
                 },
+                cors: project.cors(),
             };
             let api = observatory_api::Api::new(config);
             for spec in keys {
@@ -592,12 +621,21 @@ fn run(cli: &Cli, format: OutputFormat) -> Result<ObservatoryExit> {
                     role.parse().map_err(ObservatoryError::invalid)?;
                 api.insert_plaintext_key(plaintext, role, "cli")?;
             }
+            let limits = observatory_api::HttpLimits {
+                max_connections: *max_connections,
+                read_timeout: std::time::Duration::from_secs(*read_timeout_secs),
+                write_timeout: std::time::Duration::from_secs(*write_timeout_secs),
+                max_request_line_bytes: *max_request_line_bytes,
+                max_header_line_bytes: *max_header_line_bytes,
+                max_headers: *max_headers,
+                max_body_bytes: *max_body_bytes,
+            };
             let listener = std::net::TcpListener::bind(bind).map_err(ObservatoryError::Io)?;
             let addr = listener.local_addr().map_err(ObservatoryError::Io)?;
             if !cli.quiet {
                 eprintln!("stellar-contract-platform API listening on http://{addr}");
             }
-            observatory_api::http::serve(listener, std::sync::Arc::new(api));
+            observatory_api::http::serve_with_limits(listener, std::sync::Arc::new(api), limits);
             Ok(ObservatoryExit::Success)
         }
         Command::Doctor => {

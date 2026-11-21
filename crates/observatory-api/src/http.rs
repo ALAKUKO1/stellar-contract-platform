@@ -8,7 +8,9 @@
 use std::collections::BTreeMap;
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::{TcpListener, TcpStream};
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
+use std::time::Duration;
 
 use super::api::Api;
 
@@ -16,6 +18,49 @@ use super::api::Api;
 pub const MAX_BODY_BYTES: usize = 8 * 1024 * 1024;
 /// Maximum number of header lines.
 pub const MAX_HEADERS: usize = 100;
+/// Default maximum accepted request line size.
+pub const DEFAULT_MAX_REQUEST_LINE_BYTES: usize = 8 * 1024;
+/// Default maximum accepted single header line size.
+pub const DEFAULT_MAX_HEADER_LINE_BYTES: usize = 8 * 1024;
+/// Default socket read timeout.
+pub const DEFAULT_READ_TIMEOUT: Duration = Duration::from_secs(10);
+/// Default socket write timeout.
+pub const DEFAULT_WRITE_TIMEOUT: Duration = Duration::from_secs(10);
+/// Default maximum number of concurrent connections.
+pub const DEFAULT_MAX_CONNECTIONS: usize = 64;
+
+/// Bounds that protect the adapter from slow, oversized, or abusive clients.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct HttpLimits {
+    /// Maximum concurrent in-flight connections; excess connections get 503.
+    pub max_connections: usize,
+    /// Socket read timeout.
+    pub read_timeout: Duration,
+    /// Socket write timeout.
+    pub write_timeout: Duration,
+    /// Maximum request line size in bytes.
+    pub max_request_line_bytes: usize,
+    /// Maximum single header line size in bytes.
+    pub max_header_line_bytes: usize,
+    /// Maximum number of header lines.
+    pub max_headers: usize,
+    /// Maximum request body size in bytes.
+    pub max_body_bytes: usize,
+}
+
+impl Default for HttpLimits {
+    fn default() -> Self {
+        HttpLimits {
+            max_connections: DEFAULT_MAX_CONNECTIONS,
+            read_timeout: DEFAULT_READ_TIMEOUT,
+            write_timeout: DEFAULT_WRITE_TIMEOUT,
+            max_request_line_bytes: DEFAULT_MAX_REQUEST_LINE_BYTES,
+            max_header_line_bytes: DEFAULT_MAX_HEADER_LINE_BYTES,
+            max_headers: MAX_HEADERS,
+            max_body_bytes: MAX_BODY_BYTES,
+        }
+    }
+}
 
 /// A parsed HTTP request.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -105,13 +150,31 @@ impl Response {
     }
 }
 
-/// Parse an HTTP request from a stream.
+/// Parse an HTTP request from a stream using the default limits.
 pub fn read_request(stream: &mut TcpStream) -> std::io::Result<Option<Request>> {
+    read_request_with_limits(stream, &HttpLimits::default())
+}
+
+/// Parse an HTTP request from a stream with explicit limits.
+///
+/// Oversized request lines, header lines, header counts, and bodies are rejected
+/// with [`std::io::ErrorKind::InvalidData`]. A socket timeout surfaces as the
+/// matching I/O error so slow clients cannot hold a worker indefinitely.
+pub fn read_request_with_limits(
+    stream: &mut TcpStream,
+    limits: &HttpLimits,
+) -> std::io::Result<Option<Request>> {
     let mut reader = BufReader::new(stream.try_clone()?);
     let mut request_line = String::new();
-    if reader.read_line(&mut request_line)? == 0 {
+    if read_line_limited(
+        &mut reader,
+        limits.max_request_line_bytes,
+        &mut request_line,
+    )? == 0
+    {
         return Ok(None);
     }
+    let request_line = request_line.trim_end_matches(['\r', '\n']);
     let mut parts = request_line.split_whitespace();
     let method = parts.next().unwrap_or_default().to_ascii_uppercase();
     let target = parts.next().unwrap_or_default().to_string();
@@ -124,15 +187,15 @@ pub fn read_request(stream: &mut TcpStream) -> std::io::Result<Option<Request>> 
     let mut count = 0;
     loop {
         let mut line = String::new();
-        if reader.read_line(&mut line)? == 0 {
+        if read_line_limited(&mut reader, limits.max_header_line_bytes, &mut line)? == 0 {
             break;
         }
-        let line = line.trim_end();
+        let line = line.trim_end_matches(['\r', '\n']);
         if line.is_empty() {
             break;
         }
         count += 1;
-        if count > MAX_HEADERS {
+        if count > limits.max_headers {
             return Err(std::io::Error::new(
                 std::io::ErrorKind::InvalidData,
                 "too many headers",
@@ -147,7 +210,7 @@ pub fn read_request(stream: &mut TcpStream) -> std::io::Result<Option<Request>> 
         .get("content-length")
         .and_then(|value| value.parse().ok())
         .unwrap_or(0);
-    if length > MAX_BODY_BYTES {
+    if length > limits.max_body_bytes {
         return Err(std::io::Error::new(
             std::io::ErrorKind::InvalidData,
             "request body too large",
@@ -165,22 +228,61 @@ pub fn read_request(stream: &mut TcpStream) -> std::io::Result<Option<Request>> 
     }))
 }
 
+fn read_line_limited<R: BufRead>(
+    reader: &mut R,
+    max: usize,
+    out: &mut String,
+) -> std::io::Result<usize> {
+    let mut buffer = Vec::new();
+    let read = reader.take(max as u64 + 1).read_until(b'\n', &mut buffer)?;
+    if read > max {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            "line exceeds the configured limit",
+        ));
+    }
+    *out = String::from_utf8(buffer).map_err(|_| {
+        std::io::Error::new(std::io::ErrorKind::InvalidData, "line is not valid UTF-8")
+    })?;
+    Ok(read)
+}
+
 /// Serve requests until the listener is dropped or an accept error occurs.
+///
+/// Uses [`HttpLimits::default`]. Socket timeouts, a bounded connection count,
+/// and bounded request sizes protect the adapter from slow or oversized clients.
 pub fn serve(listener: TcpListener, api: Arc<Api>) {
+    serve_with_limits(listener, api, HttpLimits::default());
+}
+
+/// Serve requests with explicit limits.
+pub fn serve_with_limits(listener: TcpListener, api: Arc<Api>, limits: HttpLimits) {
+    let active = Arc::new(AtomicUsize::new(0));
     for stream in listener.incoming() {
         let Ok(mut stream) = stream else { continue };
+        if active.load(Ordering::SeqCst) >= limits.max_connections {
+            let _ = stream.write_all(
+                b"HTTP/1.1 503 Service Unavailable\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+            );
+            continue;
+        }
+        active.fetch_add(1, Ordering::SeqCst);
         let api = Arc::clone(&api);
+        let active = Arc::clone(&active);
         std::thread::spawn(move || {
+            let _ = stream.set_read_timeout(Some(limits.read_timeout));
+            let _ = stream.set_write_timeout(Some(limits.write_timeout));
             let client_id = stream
                 .peer_addr()
                 .map(|addr| addr.ip().to_string())
                 .unwrap_or_else(|_| "unknown".to_string());
             let now = now_secs();
-            if let Ok(Some(request)) = read_request(&mut stream) {
+            if let Ok(Some(request)) = read_request_with_limits(&mut stream, &limits) {
                 let response = api.handle(&request, &client_id, now);
                 let _ = stream.write_all(&response.to_bytes());
                 let _ = stream.flush();
             }
+            active.fetch_sub(1, Ordering::SeqCst);
         });
     }
 }
@@ -197,6 +299,7 @@ pub fn now_secs() -> u64 {
 fn reason_phrase(status: u16) -> &'static str {
     match status {
         200 => "OK",
+        204 => "No Content",
         400 => "Bad Request",
         401 => "Unauthorized",
         403 => "Forbidden",
@@ -208,6 +311,7 @@ fn reason_phrase(status: u16) -> &'static str {
         429 => "Too Many Requests",
         500 => "Internal Server Error",
         502 => "Bad Gateway",
+        503 => "Service Unavailable",
         _ => "Unknown",
     }
 }
@@ -240,5 +344,77 @@ mod tests {
         assert_eq!(request.method, "POST");
         assert_eq!(request.path, "/api/v1/health");
         assert_eq!(request.body, b"{}");
+    }
+
+    #[test]
+    fn rejects_oversized_request_line() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let mut client = TcpStream::connect(addr).unwrap();
+        let long_path = "a".repeat(256);
+        client
+            .write_all(format!("GET /{long_path} HTTP/1.1\r\nHost: x\r\n\r\n").as_bytes())
+            .unwrap();
+        let (mut server, _) = listener.accept().unwrap();
+        let limits = HttpLimits {
+            max_request_line_bytes: 64,
+            ..HttpLimits::default()
+        };
+        let error = read_request_with_limits(&mut server, &limits).unwrap_err();
+        assert_eq!(error.kind(), std::io::ErrorKind::InvalidData);
+    }
+
+    #[test]
+    fn rejects_oversized_header_line() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let mut client = TcpStream::connect(addr).unwrap();
+        let long_value = "a".repeat(256);
+        client
+            .write_all(
+                format!("GET / HTTP/1.1\r\nHost: x\r\nX-Long: {long_value}\r\n\r\n").as_bytes(),
+            )
+            .unwrap();
+        let (mut server, _) = listener.accept().unwrap();
+        let limits = HttpLimits {
+            max_header_line_bytes: 32,
+            ..HttpLimits::default()
+        };
+        let error = read_request_with_limits(&mut server, &limits).unwrap_err();
+        assert_eq!(error.kind(), std::io::ErrorKind::InvalidData);
+    }
+
+    #[test]
+    fn rejects_too_many_headers() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let mut client = TcpStream::connect(addr).unwrap();
+        client
+            .write_all(b"GET / HTTP/1.1\r\nHost: x\r\nA: 1\r\nB: 2\r\nC: 3\r\n\r\n")
+            .unwrap();
+        let (mut server, _) = listener.accept().unwrap();
+        let limits = HttpLimits {
+            max_headers: 2,
+            ..HttpLimits::default()
+        };
+        let error = read_request_with_limits(&mut server, &limits).unwrap_err();
+        assert_eq!(error.kind(), std::io::ErrorKind::InvalidData);
+        assert!(error.to_string().contains("too many headers"));
+    }
+
+    #[test]
+    fn read_timeout_rejects_silent_clients() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let _client = TcpStream::connect(addr).unwrap();
+        let (mut server, _) = listener.accept().unwrap();
+        server
+            .set_read_timeout(Some(Duration::from_millis(100)))
+            .unwrap();
+        let error = read_request_with_limits(&mut server, &HttpLimits::default()).unwrap_err();
+        assert!(matches!(
+            error.kind(),
+            std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
+        ));
     }
 }
