@@ -142,6 +142,32 @@ pub fn document() -> Value {
                     "additionalProperties": false,
                     "required": ["id"],
                     "properties": { "id": { "type": "string" } }
+                },
+                "CreateWebhookRequest": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": ["url", "events"],
+                    "properties": {
+                        "url": { "type": "string" },
+                        "events": {
+                            "type": "array",
+                            "minItems": 1,
+                            "items": { "type": "string" }
+                        }
+                    }
+                },
+                "UpdateWebhookRequest": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "properties": {
+                        "url": { "type": ["string", "null"] },
+                        "events": {
+                            "type": ["array", "null"],
+                            "minItems": 1,
+                            "items": { "type": "string" }
+                        },
+                        "active": { "type": ["boolean", "null"] }
+                    }
                 }
             },
             "responses": {
@@ -197,7 +223,15 @@ fn operation_for(method: &str, path: &str) -> Value {
             "application/json": { "schema": { "$ref": "#/components/schemas/Report" } }
         });
     }
-    if method == "POST" {
+    if path.contains("{id}") {
+        operation["parameters"] = json!([{
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string" }
+        }]);
+    }
+    if method == "POST" || method == "PATCH" {
         let schema = match request_schema_for(path) {
             Some(name) => json!({ "$ref": format!("#/components/schemas/{name}") }),
             None => json!({ "type": "object", "additionalProperties": true }),
@@ -221,6 +255,8 @@ fn request_schema_for(path: &str) -> Option<&'static str> {
         "/api/v1/contracts/events" => Some("EventsRequest"),
         "/api/v1/jobs" => Some("CreateJobRequest"),
         "/api/v1/jobs/cancel" => Some("CancelJobRequest"),
+        "/api/v1/webhooks" => Some("CreateWebhookRequest"),
+        "/api/v1/webhooks/{id}" => Some("UpdateWebhookRequest"),
         _ => None,
     }
 }
@@ -230,6 +266,7 @@ fn operation_id(method: &str, path: &str) -> String {
         .trim_start_matches("/api/v1/")
         .split('/')
         .map(|segment| {
+            let segment = segment.trim_matches(|c| c == '{' || c == '}');
             let mut chars = segment.chars();
             match chars.next() {
                 Some(first) => first.to_uppercase().collect::<String>() + chars.as_str(),
@@ -256,6 +293,8 @@ fn summary_for(path: &str) -> &'static str {
         "/api/v1/jobs" => "List, create, or read background jobs",
         "/api/v1/jobs/cancel" => "Cancel a queued job",
         "/api/v1/audit/events" => "Read the structured audit log",
+        "/api/v1/webhooks" => "List or create webhook subscriptions",
+        "/api/v1/webhooks/{id}" => "Read, update, or delete a webhook subscription",
         _ => "Operation",
     }
 }

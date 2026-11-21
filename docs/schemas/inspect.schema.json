@@ -67,10 +67,62 @@
                 }
               }
             },
-            "memories": { "type": "array", "items": { "type": "object" } },
+            "memories": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "required": ["initial_pages", "maximum_pages", "shared", "memory64"],
+                "properties": {
+                  "initial_pages": { "type": "integer", "minimum": 0 },
+                  "maximum_pages": { "type": ["integer", "null"], "minimum": 0 },
+                  "shared": { "type": "boolean" },
+                  "memory64": { "type": "boolean" }
+                }
+              }
+            },
             "imports": { "type": "array", "items": { "type": "object" } },
             "exports": { "type": "array", "items": { "type": "object" } },
             "custom_sections": { "type": "array", "items": { "type": "object" } },
+            "producers": {
+              "type": ["object", "null"],
+              "description": "Decoded from the producers custom section, when present and valid.",
+              "required": ["language", "processed_by", "sdk"],
+              "properties": {
+                "language": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "required": ["name", "version"],
+                    "properties": {
+                      "name": { "type": "string" },
+                      "version": { "type": "string" }
+                    }
+                  }
+                },
+                "processed_by": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "required": ["name", "version"],
+                    "properties": {
+                      "name": { "type": "string" },
+                      "version": { "type": "string" }
+                    }
+                  }
+                },
+                "sdk": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "required": ["name", "version"],
+                    "properties": {
+                      "name": { "type": "string" },
+                      "version": { "type": "string" }
+                    }
+                  }
+                }
+              }
+            },
             "code_section_bytes": { "type": "integer", "minimum": 0 },
             "has_contract_spec": { "type": "boolean" },
             "contract_spec_bytes": { "type": ["integer", "null"], "minimum": 0 },

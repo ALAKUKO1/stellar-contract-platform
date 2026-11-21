@@ -99,6 +99,31 @@ pub struct CancelJobRequest {
     pub id: String,
 }
 
+/// Request body for creating a webhook subscription.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CreateWebhookRequest {
+    /// The HTTPS endpoint that receives deliveries.
+    pub url: String,
+    /// Selected event names; at least one is required.
+    pub events: Vec<String>,
+}
+
+/// Request body for updating a webhook subscription.
+#[derive(Debug, Clone, Deserialize, Default)]
+#[serde(deny_unknown_fields)]
+pub struct UpdateWebhookRequest {
+    /// Replacement HTTPS endpoint.
+    #[serde(default)]
+    pub url: Option<String>,
+    /// Replacement event selection; at least one is required when present.
+    #[serde(default)]
+    pub events: Option<Vec<String>>,
+    /// Whether deliveries are active.
+    #[serde(default)]
+    pub active: Option<bool>,
+}
+
 /// Decode a base64 WASM field with a hard size bound.
 pub fn decode_wasm(field: &str) -> Result<Vec<u8>> {
     let bytes = base64::engine::general_purpose::STANDARD

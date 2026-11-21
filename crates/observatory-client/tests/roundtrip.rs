@@ -18,6 +18,7 @@ fn start_api(limit: u32) -> (SocketAddr, String) {
             limit,
             window_secs: 60,
         },
+        cors: observatory_platform::CorsConfig::default(),
     };
     let api = Api::new(config);
     let key = api

@@ -11,6 +11,8 @@ description = "Safe, bounded WASM inspection and artifact fingerprinting for Sor
 observatory-core.workspace = true
 serde.workspace = true
 wasmparser.workspace = true
+sha2.workspace = true
+hex.workspace = true
 
 [dev-dependencies]
 observatory-testutil.workspace = true

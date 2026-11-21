@@ -102,6 +102,9 @@ pub struct ApiSection {
     /// Optional rate-limit override.
     #[serde(default)]
     pub rate_limit: Option<RateLimitSection>,
+    /// Optional CORS policy; an empty allow-list denies every cross-origin call.
+    #[serde(default)]
+    pub cors: CorsSection,
 }
 
 fn default_true() -> bool {
@@ -113,8 +116,24 @@ impl Default for ApiSection {
         ApiSection {
             require_auth: true,
             rate_limit: None,
+            cors: CorsSection::default(),
         }
     }
+}
+
+/// CORS configuration for the project file.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(deny_unknown_fields)]
+pub struct CorsSection {
+    /// Exact origins that may make cross-origin requests.
+    #[serde(default)]
+    pub allowed_origins: Vec<String>,
+    /// Methods advertised to allowed origins during preflight.
+    #[serde(default)]
+    pub allowed_methods: Vec<String>,
+    /// Request headers advertised to allowed origins during preflight.
+    #[serde(default)]
+    pub allowed_headers: Vec<String>,
 }
 
 /// Rate-limit configuration for the project file.
@@ -210,6 +229,16 @@ impl ProjectConfig {
         }
     }
 
+    /// Resolve the CORS policy.
+    #[must_use]
+    pub fn cors(&self) -> crate::CorsConfig {
+        crate::CorsConfig {
+            allowed_origins: self.api.cors.allowed_origins.clone(),
+            allowed_methods: self.api.cors.allowed_methods.clone(),
+            allowed_headers: self.api.cors.allowed_headers.clone(),
+        }
+    }
+
     /// Resolve the rate-limit configuration.
     #[must_use]
     pub fn rate_limit(&self) -> RateLimitConfig {
@@ -267,6 +296,14 @@ mod tests {
     fn rejects_unknown_fields() {
         let error = ProjectConfig::parse("project:\n  nope: 1\n", ConfigFormat::Yaml).unwrap_err();
         assert!(matches!(error, ObservatoryError::InvalidInput(_)));
+    }
+
+    #[test]
+    fn resolves_cors_allow_list() {
+        let yaml = "api:\n  cors:\n    allowed_origins:\n      - https://app.example.com\n";
+        let config = ProjectConfig::parse(yaml, ConfigFormat::Yaml).unwrap();
+        assert!(config.cors().is_allowed_origin("https://app.example.com"));
+        assert!(!config.cors().is_allowed_origin("https://evil.example.com"));
     }
 
     #[test]

@@ -1323,9 +1323,11 @@ dependencies = [
 name = "observatory-wasm"
 version = "0.1.0"
 dependencies = [
+ "hex",
  "observatory-core",
  "observatory-testutil",
  "serde",
+ "sha2",
  "tempfile",
  "wasmparser",
  "wat",

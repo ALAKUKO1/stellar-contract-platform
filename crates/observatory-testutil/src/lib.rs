@@ -77,6 +77,34 @@ pub fn module_with_spec(entries: &[ScSpecEntry]) -> Vec<u8> {
     module_with_custom_section(CONTRACT_SPEC_SECTION, &encode_spec_entries(entries))
 }
 
+/// Encode the payload of a `producers` custom section.
+///
+/// `fields` are `(category, [(tool, version)])` tuples, for example
+/// `("language", &[("Rust", "1.80")])`.
+#[must_use]
+pub fn encode_producers(fields: &[(&str, &[(&str, &str)])]) -> Vec<u8> {
+    let mut out = Vec::new();
+    out.extend(leb128(fields.len() as u64));
+    for (category, values) in fields {
+        out.extend(leb128(category.len() as u64));
+        out.extend_from_slice(category.as_bytes());
+        out.extend(leb128(values.len() as u64));
+        for &(tool, version) in *values {
+            out.extend(leb128(tool.len() as u64));
+            out.extend_from_slice(tool.as_bytes());
+            out.extend(leb128(version.len() as u64));
+            out.extend_from_slice(version.as_bytes());
+        }
+    }
+    out
+}
+
+/// A WASM module containing a `producers` custom section.
+#[must_use]
+pub fn module_with_producers(fields: &[(&str, &[(&str, &str)])]) -> Vec<u8> {
+    module_with_custom_section("producers", &encode_producers(fields))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -102,5 +130,17 @@ mod tests {
     #[test]
     fn minimal_module_is_eight_bytes() {
         assert_eq!(minimal_module(), WASM_HEADER);
+    }
+
+    #[test]
+    fn producers_payload_carries_fields_and_values() {
+        let payload = encode_producers(&[
+            ("language", &[("Rust", "1.80")]),
+            ("sdk", &[("soroban-sdk", "21.0.0")]),
+        ]);
+        // Two fields, then the first name length.
+        assert_eq!(payload[0], 2);
+        assert_eq!(payload[1], 8);
+        assert_eq!(&payload[2..10], b"language");
     }
 }
