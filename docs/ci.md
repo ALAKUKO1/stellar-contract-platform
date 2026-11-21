@@ -47,6 +47,18 @@ jobs:
             contract.wasm --contract C... --rpc-fixture ci/rpc.json --network testnet
 ```
 
+By default a mismatch exits `7` and an inconclusive or errored comparison exits
+`8`. To accept inconclusive results without accepting a mismatch, set:
+
+```yaml
+ci:
+  fail_on: MISMATCH
+```
+
+`fail_on` is a comma-separated list of `MISMATCH`, `INSUFFICIENT_DATA`, and
+`ERROR`; statuses left out exit `0`. See
+[verification.md](verification.md#artifact-verification).
+
 ## Coverage
 
 The `Coverage` CI job runs `cargo-llvm-cov` on pull requests and pushes to

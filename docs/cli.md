@@ -68,6 +68,9 @@ Compares the local artifact hash against the deployed executable hash.
 - `MISMATCH` exits `7`.
 - `INSUFFICIENT_DATA` / `ERROR` exit `8`.
 
+These are the defaults. `ci.fail_on` in the project configuration selects which
+statuses fail; see [verification.md](verification.md#artifact-verification).
+
 ### `verify metadata <FILE>` and `verify compare <LEFT> <RIGHT>`
 
 Parse and compare build metadata JSON documents.

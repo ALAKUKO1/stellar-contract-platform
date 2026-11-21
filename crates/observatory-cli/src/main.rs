@@ -10,6 +10,7 @@
 //! * `7` verification mismatch
 //! * `8` verification was inconclusive
 
+use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
@@ -518,19 +519,14 @@ fn run(cli: &Cli, format: OutputFormat) -> Result<ObservatoryExit> {
             rpc_fixture,
             network,
         }) => {
+            let failures = verification_failure_policy(&project)?;
             let bytes = observatory_wasm::load_file(wasm)?;
             let client = fixture_client(rpc_fixture)?;
             let network = resolve_network(&project, network);
             let result =
                 observatory_verify::verify_local_vs_deployed(&bytes, &client, contract, &network)?;
             emit(format, "verify", &result, || print_verification(&result))?;
-            Ok(match result.status {
-                VerificationStatus::Match => ObservatoryExit::Success,
-                VerificationStatus::Mismatch => ObservatoryExit::Mismatch,
-                VerificationStatus::InsufficientData | VerificationStatus::Error => {
-                    ObservatoryExit::InsufficientData
-                }
-            })
+            Ok(verification_exit(result.status, &failures))
         }
         Command::Verify(VerifyCommand::Interface {
             wasm,
@@ -538,6 +534,7 @@ fn run(cli: &Cli, format: OutputFormat) -> Result<ObservatoryExit> {
             rpc_fixture,
             network,
         }) => {
+            let failures = verification_failure_policy(&project)?;
             let bytes = observatory_wasm::load_file(wasm)?;
             let client = fixture_client(rpc_fixture)?;
             let network = resolve_network(&project, network);
@@ -545,11 +542,12 @@ fn run(cli: &Cli, format: OutputFormat) -> Result<ObservatoryExit> {
             emit(format, "verify.interface", &result, || {
                 print_interface_verification(&result);
             })?;
-            Ok(match result.interface_match {
-                Some(true) => ObservatoryExit::Success,
-                Some(false) => ObservatoryExit::Mismatch,
-                None => ObservatoryExit::InsufficientData,
-            })
+            let status = match result.interface_match {
+                Some(true) => VerificationStatus::Match,
+                Some(false) => VerificationStatus::Mismatch,
+                None => VerificationStatus::InsufficientData,
+            };
+            Ok(verification_exit(status, &failures))
         }
         Command::Verify(VerifyCommand::Metadata { file }) => {
             let value = read_json(file)?;
@@ -710,6 +708,61 @@ fn resolve_network(
         .clone()
         .or_else(|| project.network().map(str::to_string))
         .unwrap_or_else(|| "testnet".to_string())
+}
+
+/// Verification statuses that fail the build, from `ci.fail_on`.
+///
+/// The default keeps the historical policy: a mismatch is exit `7` and an
+/// inconclusive or errored comparison is exit `8`.
+fn verification_failure_policy(
+    project: &observatory_platform::ProjectConfig,
+) -> Result<BTreeSet<String>> {
+    let Some(fail_on) = &project.ci.fail_on else {
+        return Ok(["MISMATCH", "INSUFFICIENT_DATA", "ERROR"]
+            .into_iter()
+            .map(str::to_string)
+            .collect());
+    };
+    let mut statuses = BTreeSet::new();
+    for status in fail_on.split(',') {
+        let status = status.trim().to_ascii_uppercase();
+        match status.as_str() {
+            "MISMATCH" | "INSUFFICIENT_DATA" | "ERROR" => {
+                statuses.insert(status);
+            }
+            "MATCH" => {
+                return Err(ObservatoryError::invalid(
+                    "ci.fail_on cannot include MATCH; a match never fails the build",
+                ))
+            }
+            other => {
+                return Err(ObservatoryError::invalid(format!(
+                    "unknown verification status `{other}` in ci.fail_on; \
+                     expected MISMATCH, INSUFFICIENT_DATA, or ERROR"
+                )))
+            }
+        }
+    }
+    Ok(statuses)
+}
+
+fn verification_exit(status: VerificationStatus, failures: &BTreeSet<String>) -> ObservatoryExit {
+    let name = match status {
+        VerificationStatus::Match => "MATCH",
+        VerificationStatus::Mismatch => "MISMATCH",
+        VerificationStatus::InsufficientData => "INSUFFICIENT_DATA",
+        VerificationStatus::Error => "ERROR",
+    };
+    if !failures.contains(name) {
+        return ObservatoryExit::Success;
+    }
+    match status {
+        VerificationStatus::Match => ObservatoryExit::Success,
+        VerificationStatus::Mismatch => ObservatoryExit::Mismatch,
+        VerificationStatus::InsufficientData | VerificationStatus::Error => {
+            ObservatoryExit::InsufficientData
+        }
+    }
 }
 
 fn load_interface(path: &Path) -> Result<ContractInterface> {

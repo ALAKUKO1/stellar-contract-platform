@@ -91,6 +91,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- CLI: `verify artifact` and `verify interface` honour `ci.fail_on`, a
+  comma-separated list of the verification statuses that fail the build. The
+  default stays `MISMATCH,INSUFFICIENT_DATA,ERROR`; omitting a status makes it
+  exit `0`, and `MATCH` is rejected. Previously the field was advisory. See
+  `docs/verification.md` and `docs/ci.md`.
 - Spec: decoding peeks at the 4-byte `ScSpecEntryKind` discriminant, so an
   unknown entry kind returns an `unsupported` error naming the kind, offset, and
   already-decoded entry count instead of a malformed-spec error. See

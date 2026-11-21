@@ -111,7 +111,7 @@ window_secs = 60
 | `profiles.<network>.endpoint` | Endpoint override when that profile is selected. |
 | `profiles.<network>.policy` | Compatibility-policy override when that profile is selected. |
 | `profile` | Profile used when `--profile` is omitted. |
-| `ci.fail_on` | Documented CI failure policy (advisory in this build). |
+| `ci.fail_on` | Comma-separated verification statuses that fail the build: `MISMATCH`, `INSUFFICIENT_DATA`, `ERROR`. Defaults to all three. |
 
 ## Precedence
 
@@ -129,6 +129,8 @@ window_secs = 60
 - A profile `endpoint` must be a valid `https` endpoint (loopback `http` is allowed).
 - Selecting an unknown profile is an error.
 - An unknown `audit.enabled` or `audit.severity` rule id is an error.
+- A `ci.fail_on` status other than `MISMATCH`, `INSUFFICIENT_DATA`, or `ERROR`
+  is an error; `MATCH` is rejected.
 - An unsupported file extension is an unsupported-feature error (exit code `5`).
 
 `analysis.compatibility.policy` accepts only the `strict` and `lenient` presets.
@@ -139,5 +141,4 @@ For individual rule settings, pass a separate policy document to
 
 Live environment-variable overrides are not implemented yet; `rpc.endpoint` is
 recorded and validated but the shipped verify/deployment commands still read
-deployed state only through RPC fixtures. `ci.fail_on` is documented but
-advisory in this build.
+deployed state only through RPC fixtures.
