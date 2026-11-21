@@ -121,7 +121,15 @@ fn operation_for(method: &str, path: &str) -> Value {
             "application/json": { "schema": { "$ref": "#/components/schemas/Report" } }
         });
     }
-    if method == "POST" {
+    if path.contains("{id}") {
+        operation["parameters"] = json!([{
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string" }
+        }]);
+    }
+    if method == "POST" || method == "PATCH" {
         operation["requestBody"] = json!({
             "required": true,
             "content": {
@@ -139,6 +147,7 @@ fn operation_id(method: &str, path: &str) -> String {
         .trim_start_matches("/api/v1/")
         .split('/')
         .map(|segment| {
+            let segment = segment.trim_matches(|c| c == '{' || c == '}');
             let mut chars = segment.chars();
             match chars.next() {
                 Some(first) => first.to_uppercase().collect::<String>() + chars.as_str(),
@@ -161,6 +170,8 @@ fn summary_for(path: &str) -> &'static str {
         "/api/v1/contracts/compatibility" => "Assess interface compatibility",
         "/api/v1/contracts/fingerprint" => "Compute fingerprints",
         "/api/v1/contracts/security" => "Run security heuristics",
+        "/api/v1/webhooks" => "List or create webhook subscriptions",
+        "/api/v1/webhooks/{id}" => "Read, update, or delete a webhook subscription",
         _ => "Operation",
     }
 }

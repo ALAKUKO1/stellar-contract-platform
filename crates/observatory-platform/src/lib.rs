@@ -15,12 +15,16 @@ pub mod project;
 pub mod ratelimit;
 pub mod rbac;
 pub mod service;
+pub mod webhook;
 
 pub use auth::{ApiKeyRecord, ApiKeyStore, Principal};
-pub use config::PlatformConfig;
+pub use config::{CorsConfig, PlatformConfig};
 pub use observatory_compat::CompatibilityPolicy;
 pub use policy::{load_policy, parse_policy};
 pub use project::{ConfigFormat, ProjectConfig};
 pub use ratelimit::{RateLimitConfig, RateLimitDecision, RateLimiter};
 pub use rbac::{authorize, Permission, Role};
 pub use service::Observatory;
+pub use webhook::{
+    validate_webhook_url, WebhookCreated, WebhookEvent, WebhookStore, WebhookSubscription,
+};

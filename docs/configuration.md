@@ -36,6 +36,11 @@ api:
   rate_limit:
     limit: 120
     window_secs: 60
+  cors:
+    allowed_origins:
+      - https://app.example.com
+    allowed_methods: [GET, POST, PATCH, DELETE]
+    allowed_headers: [content-type, authorization, x-api-key]
 
 ci:
   fail_on: MISMATCH       # statuses that should fail a build
@@ -66,6 +71,7 @@ window_secs = 30
 | `analysis.compatibility.policy` | Default policy for `compat` when `--policy` is omitted. |
 | `api.require_auth` | Default authentication requirement for `api serve`. |
 | `api.rate_limit` | Default rate limit for `api serve`. |
+| `api.cors` | Cross-origin allow-list for `api serve`; empty denies all origins. |
 | `rpc.endpoint` | Documented default endpoint (recorded; live transport is future work). |
 | `ci.fail_on` | Documented CI failure policy (advisory in this build). |
 

@@ -57,6 +57,23 @@ Analysis endpoints require `run_analysis`. `GET /health`, `/readiness`,
 `/version`, and `/metrics` are public. Metrics expose only aggregate counters,
 never endpoints, keys, or payloads.
 
+## CORS
+
+Cross-origin access is denied by default. Configure exact origins through
+`PlatformConfig.cors` or the project file (`api.cors`). Allowed origins are
+echoed in `Access-Control-Allow-Origin`; disallowed origins receive no CORS
+headers. Preflight (`OPTIONS`) requests from allowed origins return `204` with
+`Access-Control-Allow-Methods` and `Access-Control-Allow-Headers`. Credentials
+are never enabled, so a wildcard origin cannot be combined with cookies.
+
+## HTTP adapter limits
+
+The bundled adapter enforces configurable read/write timeouts, a bounded
+concurrent connection count (excess connections receive `503`), and bounded
+request-line, header-line, header-count, and body sizes. Every limit is a CLI
+flag (`api serve --max-connections 64 --read-timeout-secs 10 ...`) and mirrors
+`observatory_api::http::HttpLimits`.
+
 ## Rate limiting
 
 Fixed-window, keyed by API-key id (or client IP when unauthenticated).
@@ -129,6 +146,24 @@ Body: `{ "wasm_base64": "..." }`. Returns artifact and interface fingerprints.
 ### `POST /api/v1/contracts/security`
 Body: `{ "wasm_base64": "..." }`. Returns bounded heuristic findings.
 
+### Webhook subscriptions
+
+Webhook registration requires `manage_webhooks` (the `maintainer` or `admin`
+role). URLs must use `https` and must not embed credentials.
+
+| Method | Path | Purpose |
+| ------ | ---- | ------- |
+| `POST` | `/api/v1/webhooks` | Register a subscription |
+| `GET` | `/api/v1/webhooks` | List subscriptions |
+| `GET` | `/api/v1/webhooks/{id}` | Read a subscription |
+| `PATCH` | `/api/v1/webhooks/{id}` | Update URL, events, or active state |
+| `DELETE` | `/api/v1/webhooks/{id}` | Delete a subscription |
+
+Create body: `{ "url": "https://example.com/hook", "events": ["analysis_completed"] }`.
+Supported events are `analysis_completed`, `analysis_failed`, and
+`deployment_verified`. The response includes a random `secret` exactly once; it
+is never returned by list or get.
+
 ## Response envelope
 
 Success:
@@ -181,7 +216,6 @@ Typed Rust and TypeScript clients live under `crates/observatory-client` and
 
 ## Not included
 
-- Webhook management endpoints (planned).
 - Deployment/verification endpoints over live RPC (blocked on the live
   transport, issue #13).
-- Persistence of keys, users, or audit events (planned).
+- Persistence of keys, users, webhooks, or audit events (planned).
