@@ -231,6 +231,60 @@ failures (`408`, `429`, `5xx`, and transport errors) are retried with
 exponential backoff; other `4xx` responses are not. See
 [webhooks.md](webhooks.md) for verification steps.
 
+## API versioning and deprecation
+
+The API version is the path segment: requests are served under `/api/v1`, and
+`GET /api/v1/version` reports it as `api_version: "v1"`. The version covers the
+route set, request and response shapes, authentication requirements, status
+codes, and the meaning of a successful response.
+
+### Adding changes
+
+Additive changes ship within the current version. Examples are a new route, a
+new response field, or a new optional request field. Consumers must ignore
+response fields they do not recognise; request schemas still reject unknown
+fields, so new request fields are only compatible when they are optional.
+
+A change is breaking when it removes or renames a route or field, changes a
+field's type or the status code for an existing outcome, tightens
+authentication or validation, or changes what an existing response means. A
+breaking change requires a new API version (for example `/api/v2`). The previous
+version is not changed to accommodate it.
+
+### Deprecating and retiring
+
+A version is deprecated before it is retired:
+
+1. Deprecation is announced in this document and in `CHANGELOG.md`. The
+   announcement names the version being replaced, the replacement version, and
+   the routes or behaviours that change.
+2. The deprecated version continues to serve requests for at least one minor
+   tool release after the announcement, so consumers have a release cycle to
+   migrate.
+3. Retirement removes the version from the route table. Requests to a retired
+   version return `404`, and the version no longer appears in the OpenAPI
+   document.
+
+No calendar dates are promised. A version is retired only after the notice in
+step 1 and the overlap in step 2 have both happened. This policy can change, but
+a change that shortens notice is itself a breaking change and is documented the
+same way.
+
+### Relationship to `schema_version`
+
+`api_version` and `schema_version` are independent:
+
+- `api_version` selects the HTTP surface: routes, request bodies, and status
+  codes.
+- `schema_version` identifies the JSON report envelope and payload schemas. It
+  currently is `1.0` and appears in every success and error report.
+
+A new API version may keep the same `schema_version` when the report shapes do
+not change. A `schema_version` change does not by itself require a new API
+version when the route surface is unchanged. Consumers that parse reports should
+pin both values. The schemas are published under `docs/schemas/`; see
+[`schemas/README.md`](schemas/README.md).
+
 ## Response envelope
 
 Success:

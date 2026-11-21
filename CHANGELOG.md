@@ -9,6 +9,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Audit: the `audit` configuration block controls which rules run and their
+  severity. `enabled` is an allow-list that defaults to every non-experimental
+  rule, `severity` overrides `WARN`/`ERROR` per rule, and unknown rule ids are
+  rejected. `inspect --security` honours the block. See `docs/security.md`.
+- Configuration: per-network profiles under `profiles`, keyed by network name
+  and selected with `--profile` or the `profile` field. A profile can override
+  `rpc.endpoint` and `analysis.compatibility.policy`; malformed profile names,
+  unknown selections, and invalid overrides are rejected at load time. See
+  `docs/configuration.md`.
 - WASM: `inspect` now reports bounded details for the start, data, element,
   and table sections: the start function index, segment counts and per-segment
   sizes or item counts, and table element/limit declarations. Data segment
@@ -82,12 +91,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- CLI: `verify artifact` and `verify interface` honour `ci.fail_on`, a
+  comma-separated list of the verification statuses that fail the build. The
+  default stays `MISMATCH,INSUFFICIENT_DATA,ERROR`; omitting a status makes it
+  exit `0`, and `MATCH` is rejected. Previously the field was advisory. See
+  `docs/verification.md` and `docs/ci.md`.
 - Spec: decoding peeks at the 4-byte `ScSpecEntryKind` discriminant, so an
   unknown entry kind returns an `unsupported` error naming the kind, offset, and
   already-decoded entry count instead of a malformed-spec error. See
   `docs/contract-specifications.md`.
 - CLI: an unsupported `--config` file extension is an unsupported-feature error
   (exit code `5`), not a usage error (`2`).
+
+### Documentation
+
+- API: documented the version lifecycle in `docs/API.md`, covering how versions
+  are added, deprecated, and retired, notice expectations, and the separate roles
+  of the API version and `schema_version`. No calendar dates are promised.
 
 ## [0.1.0] - 2026-10-28
 

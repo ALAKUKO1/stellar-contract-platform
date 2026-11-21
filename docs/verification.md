@@ -20,6 +20,20 @@ stellar-contract-platform verify artifact contract.wasm \
 | `INSUFFICIENT_DATA` | No instance entry, or the contract is not WASM-backed. | `8` |
 | `ERROR` | The comparison could not be completed. | `8` |
 
+Those are the default exit codes. To change which statuses fail, set
+`ci.fail_on` in the project configuration to a comma-separated list of
+`MISMATCH`, `INSUFFICIENT_DATA`, and `ERROR`:
+
+```yaml
+ci:
+  fail_on: MISMATCH
+```
+
+The default is all three statuses. A status left out of the list exits `0`;
+for example, `fail_on: MISMATCH` fails on a mismatch but lets an inconclusive
+comparison pass. `MATCH` is not accepted, because a match never fails a build.
+The same policy applies to `verify interface`.
+
 ### What this proves, and what it does not
 
 Matching hashes prove that the local and deployed **artifacts** are identical.

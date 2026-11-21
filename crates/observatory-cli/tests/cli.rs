@@ -385,6 +385,78 @@ fn verify_artifact_inconclusive_exits_8() {
 }
 
 #[test]
+fn verify_failure_policy_can_ignore_a_mismatch() {
+    let wasm = module_with_spec(&[spec_function("hello", &[], Some(ScSpecTypeDef::Bool))]);
+    let wasm_file = write_temp(&wasm, ".wasm");
+    let contract_id = format!("{}", stellar_strkey::Contract([9u8; 32]));
+    let fixture = instance_fixture([7u8; 32]);
+    let fixture_file = write_temp(fixture.as_bytes(), ".json");
+    let config = write_temp(b"ci:\n  fail_on: INSUFFICIENT_DATA\n", ".yml");
+    let args = verify_artifact_args(
+        wasm_file.path().to_str().unwrap(),
+        &contract_id,
+        fixture_file.path().to_str().unwrap(),
+    );
+
+    binary()
+        .args(args)
+        .arg("--config")
+        .arg(config.path().to_str().unwrap())
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("status: Mismatch"));
+}
+
+#[test]
+fn verify_failure_policy_can_fail_on_inconclusive_results_only() {
+    let wasm = module_with_spec(&[spec_function("hello", &[], Some(ScSpecTypeDef::Bool))]);
+    let wasm_file = write_temp(&wasm, ".wasm");
+    let contract_id = format!("{}", stellar_strkey::Contract([9u8; 32]));
+    let fixture_file = write_temp(EMPTY_LEDGER_ENTRIES_FIXTURE.as_bytes(), ".json");
+    let args = verify_artifact_args(
+        wasm_file.path().to_str().unwrap(),
+        &contract_id,
+        fixture_file.path().to_str().unwrap(),
+    );
+    let ignore = write_temp(b"ci:\n  fail_on: MISMATCH\n", ".yml");
+    binary()
+        .args(args)
+        .arg("--config")
+        .arg(ignore.path().to_str().unwrap())
+        .assert()
+        .success();
+
+    let fail = write_temp(b"ci:\n  fail_on: MISMATCH, INSUFFICIENT_DATA\n", ".yml");
+    binary()
+        .args(args)
+        .arg("--config")
+        .arg(fail.path().to_str().unwrap())
+        .assert()
+        .code(8);
+}
+
+#[test]
+fn verify_failure_policy_rejects_unknown_statuses() {
+    let wasm = module_with_spec(&[spec_function("hello", &[], Some(ScSpecTypeDef::Bool))]);
+    let wasm_file = write_temp(&wasm, ".wasm");
+    let contract_id = format!("{}", stellar_strkey::Contract([9u8; 32]));
+    let fixture_file = write_temp(EMPTY_LEDGER_ENTRIES_FIXTURE.as_bytes(), ".json");
+    let config = write_temp(b"ci:\n  fail_on: MAYBE\n", ".yml");
+    let args = verify_artifact_args(
+        wasm_file.path().to_str().unwrap(),
+        &contract_id,
+        fixture_file.path().to_str().unwrap(),
+    );
+    binary()
+        .args(args)
+        .arg("--config")
+        .arg(config.path().to_str().unwrap())
+        .assert()
+        .code(2)
+        .stderr(predicate::str::contains("unknown verification status"));
+}
+
+#[test]
 fn verify_interface_reports_a_match_against_a_fixture() {
     let wasm = module_with_spec(&[spec_function("hello", &[], Some(ScSpecTypeDef::Bool))]);
     let contract_id = format!("{}", stellar_strkey::Contract([9u8; 32]));
