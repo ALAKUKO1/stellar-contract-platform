@@ -9,6 +9,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Interface: `ContractInterface::is_subset_of` reports whether every function,
+  type, and event in one interface structurally exists in another. The check
+  compares canonical shapes, ignores documentation, is deterministic, and is
+  explicitly structural rather than behavioral. See `docs/architecture.md`.
+- Diff: `type_renamed` pairs one removed and one added struct, union, enum, or
+  error enum only when their canonical shapes match exactly and the pairing is
+  unambiguous. See `docs/interface-diff.md`.
+- Diff: `event_renamed` pairs one removed and one added event only when their
+  prefix topics, parameters, and data format match exactly and the pairing is
+  unambiguous. See `docs/interface-diff.md`.
+- Docs: `INTERFACE_SCHEMA_VERSION` policy covering additive versus breaking
+  changes, consumer guidance, and the changelog requirement. See
+  `docs/interface-schema-versioning.md`.
 - WASM: `inspect` now reports bounded details for the start, data, element,
   and table sections: the start function index, segment counts and per-segment
   sizes or item counts, and table element/limit declarations. Data segment

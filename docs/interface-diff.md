@@ -7,8 +7,8 @@ each change a default severity. It never claims compatibility; that is
 ## Change kinds
 
 Functions: `function_added`, `function_removed`, `function_changed`, `function_renamed`.
-Types: `type_added`, `type_removed`, `type_changed`.
-Events: `event_added`, `event_removed`, `event_changed`.
+Types: `type_added`, `type_removed`, `type_changed`, `type_renamed`.
+Events: `event_added`, `event_removed`, `event_changed`, `event_renamed`.
 
 ## Default severity rules
 
@@ -20,10 +20,12 @@ Events: `event_added`, `event_removed`, `event_changed`.
 | Function documentation only | informational |
 | Type added | non-breaking |
 | Type removed | breaking |
+| Type renamed (identical shape) | breaking |
 | Type definition changed | breaking |
 | Type documentation only | informational |
 | Event added | non-breaking |
 | Event removed | breaking |
+| Event renamed (identical shape) | breaking |
 | Event definition changed | breaking |
 
 ## Determinism
@@ -57,8 +59,34 @@ raises confidence; the change detail marks the pairing as heuristic so readers
 can check the old and new renderings. A removal and addition with different
 signatures always stay separate.
 
+## Type renames
+
+A user-defined type (struct, union, enum, or error enum) rename is reported as
+`type_renamed` only when exactly one removed type and one added type share the
+same canonical shape and the pairing is unambiguous. The canonical shape is the
+type kind plus its ordered fields, cases, and payload types (and enum values);
+the type name and documentation are excluded. A struct is never paired with a
+union, and an enum is never paired with an error enum even when their cases
+match. Different shapes, or ambiguous pairings (for example, two removed structs
+with one added struct of the same shape), are reported as separate removals and
+additions. A type rename is breaking by default because consumers refer to types
+by name.
+
+## Event renames
+
+An event rename is reported as `event_renamed` only when exactly one removed
+event and one added event share the same shape and the pairing is unambiguous.
+The shape covers the prefix topics, the ordered parameters (names, types, and
+topic/data locations), and the data format; the event name and documentation
+are excluded. Ambiguous or differing shapes are never paired. An event rename is
+breaking by default because indexers and consumers filter by event name.
+
 ## What it does not do
 
 - It does not decide compatibility. Use `compat`.
-- It does not detect renames with changed signatures; those appear as a removal
-  plus an addition.
+- It does not detect function renames with changed signatures; those appear as a
+  removal plus an addition.
+- It does not prove intent. Rename pairing is a heuristic based on structural
+  identity, not a semantic guarantee.
+- It does not follow renames into references. A renamed type still referenced by
+  its old name in a function signature shows up as a signature change.

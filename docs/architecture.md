@@ -85,6 +85,12 @@ RPC fixture ──► observatory-rpc ──► observatory-deployment ──►
 - **Canonical ordering.** Name-keyed collections are sorted; sequence-keyed
   collections (parameters, fields, cases) preserve their declared order because
   that order is semantic.
+- **Versioned interface representation.** The canonical interface document is
+  identified by `INTERFACE_SCHEMA_VERSION`. Additive representation changes do
+  not bump it; breaking changes must bump it and be recorded in the changelog.
+  Consumers must check the version before interpreting stored documents or
+  comparing fingerprints. See
+  [interface schema versioning](interface-schema-versioning.md).
 - **Offline by default.** No unit test touches the network. The RPC layer is
   transport-agnostic and ships a deterministic mock/fixture transport.
 - **Machine-readable first.** Every report is wrapped in a versioned envelope.
