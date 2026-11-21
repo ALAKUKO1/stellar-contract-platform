@@ -89,6 +89,15 @@ RPC fixture ──► observatory-rpc ──► observatory-deployment ──►
   transport-agnostic and ships a deterministic mock/fixture transport.
 - **Machine-readable first.** Every report is wrapped in a versioned envelope.
 
+Each of these decisions has a recorded rationale and history in the
+[architecture decision records](adr/README.md): never execute WASM
+([ADR-0001](adr/0001-never-execute-wasm.md)), description vs. judgement
+([ADR-0002](adr/0002-description-vs-judgement.md)), fixture-first RPC
+([ADR-0003](adr/0003-fixture-first-rpc.md)), bounded parsing
+([ADR-0004](adr/0004-bounded-parsing.md)), canonical ordering
+([ADR-0005](adr/0005-canonical-ordering.md)), and offline tests
+([ADR-0006](adr/0006-offline-tests.md)).
+
 ## Extension points
 
 - Add a `Transport` implementation to enable a live RPC provider.
