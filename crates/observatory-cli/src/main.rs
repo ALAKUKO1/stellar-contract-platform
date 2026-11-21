@@ -46,6 +46,10 @@ struct Cli {
     #[arg(long, global = true, value_name = "FILE")]
     config: Option<PathBuf>,
 
+    /// Select a named per-network configuration profile.
+    #[arg(long, global = true, value_name = "NAME")]
+    profile: Option<String>,
+
     /// Increase logging verbosity (repeatable).
     #[arg(short, long, global = true, action = clap::ArgAction::Count)]
     verbose: u8,
@@ -320,6 +324,7 @@ fn run(cli: &Cli, format: OutputFormat) -> Result<ObservatoryExit> {
         );
     }
     let project = load_config(cli)?;
+    project.selected_profile(cli.profile.as_deref())?;
     match &cli.command {
         Command::Inspect {
             wasm,
@@ -452,7 +457,7 @@ fn run(cli: &Cli, format: OutputFormat) -> Result<ObservatoryExit> {
                             "unknown policy `{other}`; expected strict or lenient"
                         )))
                     }
-                    None => project.compatibility_policy()?,
+                    None => project.compatibility_policy_for(cli.profile.as_deref())?,
                 }
             };
             let old_interface = load_interface(old)?;
@@ -494,7 +499,10 @@ fn run(cli: &Cli, format: OutputFormat) -> Result<ObservatoryExit> {
             let client = fixture_client(rpc_fixture)?;
             let network = resolve_network(&project, network);
             let _ = network.parse::<Network>()?;
-            if let Some(url) = rpc_url {
+            let endpoint = rpc_url
+                .as_deref()
+                .or(project.rpc_endpoint_for(cli.profile.as_deref())?);
+            if let Some(url) = endpoint {
                 let _ = Endpoint::parse(url)?;
             }
             let info = observatory_deployment::inspect(&client, contract)?;

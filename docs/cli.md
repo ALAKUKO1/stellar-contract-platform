@@ -10,6 +10,8 @@ stellar-contract-platform [OPTIONS] <COMMAND>
 | ------ | ----------- |
 | `--json` | Emit a machine-readable JSON report envelope (alias for `--format json`). |
 | `--format <text\|json>` | Output format; defaults to `text`. |
+| `--config <FILE>` | Project configuration file; discovered automatically when omitted. |
+| `--profile <NAME>` | Select a per-network configuration profile. See [configuration.md](configuration.md#per-network-profiles). |
 | `-q`, `--quiet` | Suppress non-essential diagnostics (progress/notes). Primary results still print. |
 | `-v`, `--verbose` | Emit diagnostics to stderr (repeatable). |
 | `-h`, `--help` | Print help. |

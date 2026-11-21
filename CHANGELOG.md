@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Configuration: per-network profiles under `profiles`, keyed by network name
+  and selected with `--profile` or the `profile` field. A profile can override
+  `rpc.endpoint` and `analysis.compatibility.policy`; malformed profile names,
+  unknown selections, and invalid overrides are rejected at load time. See
+  `docs/configuration.md`.
 - WASM: `inspect` now reports bounded details for the start, data, element,
   and table sections: the start function index, segment counts and per-segment
   sizes or item counts, and table element/limit declarations. Data segment
