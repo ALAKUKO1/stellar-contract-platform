@@ -280,4 +280,185 @@ mod tests {
             "55b4750964574865fa8ecb0a1b6c772fd9b666cf5e6f556832011ad1f3a0f1d4"
         );
     }
+
+    /// Deterministic interfaces covering the shapes that the canonical
+    /// serialization must handle: primitives, composites, user-defined types,
+    /// events, and a large interface.
+    fn known_vectors() -> Vec<(&'static str, ContractInterface)> {
+        use observatory_testutil::spec::{spec_error_enum, spec_event, spec_union};
+        use stellar_xdr::{
+            ScSpecEventParamLocationV0, ScSpecTypeBytesN, ScSpecTypeMap, ScSpecTypeOption,
+            ScSpecTypeResult, ScSpecTypeTuple, ScSpecTypeVec, VecM,
+        };
+
+        let primitives = ContractInterface::from_spec(spec(vec![spec_function(
+            "primitives",
+            &[
+                ("bool", ScSpecTypeDef::Bool),
+                ("u32", ScSpecTypeDef::U32),
+                ("i32", ScSpecTypeDef::I32),
+                ("u64", ScSpecTypeDef::U64),
+                ("i64", ScSpecTypeDef::I64),
+                ("u128", ScSpecTypeDef::U128),
+                ("i128", ScSpecTypeDef::I128),
+                ("symbol", ScSpecTypeDef::Symbol),
+                ("string", ScSpecTypeDef::String),
+                ("bytes", ScSpecTypeDef::Bytes),
+                ("address", ScSpecTypeDef::Address),
+            ],
+            Some(ScSpecTypeDef::Void),
+        )]));
+
+        let composites = ContractInterface::from_spec(spec(vec![spec_function(
+            "composites",
+            &[
+                (
+                    "opt",
+                    ScSpecTypeDef::Option(Box::new(ScSpecTypeOption {
+                        value_type: Box::new(ScSpecTypeDef::U32),
+                    })),
+                ),
+                (
+                    "vec",
+                    ScSpecTypeDef::Vec(Box::new(ScSpecTypeVec {
+                        element_type: Box::new(ScSpecTypeDef::I128),
+                    })),
+                ),
+                (
+                    "map",
+                    ScSpecTypeDef::Map(Box::new(ScSpecTypeMap {
+                        key_type: Box::new(ScSpecTypeDef::Symbol),
+                        value_type: Box::new(ScSpecTypeDef::U64),
+                    })),
+                ),
+                (
+                    "res",
+                    ScSpecTypeDef::Result(Box::new(ScSpecTypeResult {
+                        ok_type: Box::new(ScSpecTypeDef::U32),
+                        error_type: Box::new(ty_udt("Error")),
+                    })),
+                ),
+                (
+                    "tup",
+                    ScSpecTypeDef::Tuple(Box::new(ScSpecTypeTuple {
+                        value_types: VecM::try_from(vec![ScSpecTypeDef::U32, ScSpecTypeDef::Bool])
+                            .expect("within limit"),
+                    })),
+                ),
+                ("bytesn", ScSpecTypeDef::BytesN(ScSpecTypeBytesN { n: 32 })),
+            ],
+            None,
+        )]));
+
+        let udts = ContractInterface::from_spec(spec(vec![
+            spec_struct(
+                "Config",
+                &[
+                    ("owner", ScSpecTypeDef::Address),
+                    ("limit", ScSpecTypeDef::U32),
+                ],
+            ),
+            spec_enum("Status", &[("Active", 0), ("Paused", 1)]),
+            spec_union(
+                "Payload",
+                &[("None", None), ("Some", Some(vec![ty_udt("Config")]))],
+            ),
+            spec_error_enum("Error", &[("NotFound", 1), ("Denied", 2)]),
+            spec_function(
+                "store",
+                &[("config", ty_udt("Config"))],
+                Some(ty_udt("Status")),
+            ),
+        ]));
+
+        let events = ContractInterface::from_spec(spec(vec![
+            spec_event(
+                "transfer",
+                &["transfer", "v1"],
+                &[
+                    (
+                        "from",
+                        ScSpecTypeDef::Address,
+                        ScSpecEventParamLocationV0::TopicList,
+                    ),
+                    (
+                        "amount",
+                        ScSpecTypeDef::I128,
+                        ScSpecEventParamLocationV0::Data,
+                    ),
+                ],
+            ),
+            spec_event(
+                "mint",
+                &["mint"],
+                &[(
+                    "to",
+                    ScSpecTypeDef::Address,
+                    ScSpecEventParamLocationV0::Data,
+                )],
+            ),
+        ]));
+
+        let mut large_entries = Vec::new();
+        for index in 0..20 {
+            large_entries.push(spec_function(
+                &format!("fn_{index:02}"),
+                &[("value", ScSpecTypeDef::U64)],
+                Some(ScSpecTypeDef::Bool),
+            ));
+            large_entries.push(spec_struct(
+                &format!("Type{index:02}"),
+                &[("field", ScSpecTypeDef::U32)],
+            ));
+        }
+        let large = ContractInterface::from_spec(spec(large_entries));
+
+        vec![
+            ("primitives", primitives),
+            ("composites", composites),
+            ("udts", udts),
+            ("events", events),
+            ("large", large),
+        ]
+    }
+
+    #[test]
+    fn known_fingerprint_vectors_are_stable() {
+        // Each vector pins the canonical JSON serialization *format*, not
+        // interface semantics. A serialization change that alters the bytes for
+        // any of these interfaces must update these digests deliberately.
+        let expected = [
+            (
+                "primitives",
+                "a36fd01c938664e61ca7ba28b3f699cdab1e8eba8eae92758a4cad8ba278dd70",
+            ),
+            (
+                "composites",
+                "c22fb5358b7caf19b2ebc0255ea51db50edd29e9ea24408d3f4f050f70ef37ab",
+            ),
+            (
+                "udts",
+                "fc7c9ae5bc2773533bf3ae7ffd6ba8afd124284e92daa574205edcd81f108bf3",
+            ),
+            (
+                "events",
+                "bfa29909a24d3e6b9c35dda8c65db6c8f1bd8a0aeac47e53a8e82c6f8660e5fb",
+            ),
+            (
+                "large",
+                "0e2c381f2903816551f613f07556660759a97e1836c5574dac2d2dd747ff3d09",
+            ),
+        ];
+
+        let vectors = known_vectors();
+        assert_eq!(vectors.len(), expected.len());
+        for ((name, interface), (expected_name, digest)) in vectors.iter().zip(expected.iter()) {
+            assert_eq!(name, expected_name);
+            assert_eq!(
+                interface.fingerprint().unwrap(),
+                *digest,
+                "fingerprint vector `{name}` changed; update the digest only for a deliberate serialization change"
+            );
+        }
+    }
 }
