@@ -8,6 +8,7 @@
 //! CI. Ordering of imports, exports, and custom sections follows module order,
 //! which is meaningful for WASM.
 
+use std::io::Read;
 use std::path::Path;
 
 use observatory_core::hash::sha256_hex;
@@ -17,7 +18,8 @@ use observatory_core::limits::{
 };
 use observatory_core::{ObservatoryError, Result};
 use serde::{Deserialize, Serialize};
-use wasmparser::{ElementItems, ExternalKind, Parser, Payload, TypeRef};
+use sha2::{Digest, Sha256};
+use wasmparser::{ElementItems, ExternalKind, KnownCustom, Parser, Payload, TypeRef};
 
 /// Custom section name carrying the Soroban contract specification.
 pub const CONTRACT_SPEC_SECTION: &str = "contractspecv0";
@@ -33,6 +35,15 @@ pub const CONTRACT_ENV_META_SECTION: &str = "contractenvmetav0";
 /// rejected rather than truncated, so a dump is never mistaken for the whole
 /// payload.
 pub const MAX_DUMP_BYTES: usize = 64 * 1024;
+
+/// Chunk size used when hashing a file incrementally, in bytes (64 KiB).
+///
+/// Streaming hashing keeps peak memory bounded by this buffer regardless of the
+/// artifact size.
+pub const HASH_CHUNK_BYTES: usize = 64 * 1024;
+
+/// Maximum number of `producers` entries retained across all categories.
+pub const MAX_PRODUCER_ENTRIES: usize = 64;
 
 /// A single import entry.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -72,6 +83,28 @@ pub struct MemoryInfo {
     pub maximum_pages: Option<u64>,
     /// Whether the memory is shared.
     pub shared: bool,
+    /// Whether this is a 64-bit memory (the WebAssembly `memory64` proposal).
+    pub memory64: bool,
+}
+
+/// One `producers` entry: a tool name and its version.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ProducerEntry {
+    /// Tool name, preserved verbatim.
+    pub name: String,
+    /// Tool version, preserved verbatim.
+    pub version: String,
+}
+
+/// Build provenance decoded from the `producers` custom section.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ProducersInfo {
+    /// `language` entries.
+    pub language: Vec<ProducerEntry>,
+    /// `processed-by` entries.
+    pub processed_by: Vec<ProducerEntry>,
+    /// `sdk` entries.
+    pub sdk: Vec<ProducerEntry>,
 }
 
 /// The start section, when declared.
@@ -143,6 +176,8 @@ pub struct WasmReport {
     pub exports: Vec<ExportInfo>,
     /// Custom sections in module order.
     pub custom_sections: Vec<CustomSectionInfo>,
+    /// Build provenance from the `producers` section, when present and valid.
+    pub producers: Option<ProducersInfo>,
     /// Total byte size of the code section.
     pub code_section_bytes: usize,
     /// Whether a `contractspecv0` section is present.
@@ -228,6 +263,7 @@ pub fn inspect(bytes: &[u8]) -> Result<WasmReport> {
         imports: Vec::new(),
         exports: Vec::new(),
         custom_sections: Vec::new(),
+        producers: None,
         code_section_bytes: 0,
         has_contract_spec: false,
         contract_spec_bytes: None,
@@ -300,6 +336,7 @@ pub fn inspect(bytes: &[u8]) -> Result<WasmReport> {
                         initial_pages: memory.initial,
                         maximum_pages: memory.maximum,
                         shared: memory.shared,
+                        memory64: memory.memory64,
                     });
                 }
             }
@@ -343,6 +380,13 @@ pub fn inspect(bytes: &[u8]) -> Result<WasmReport> {
                 if name == CONTRACT_SPEC_SECTION {
                     report.has_contract_spec = true;
                     report.contract_spec_bytes = Some(size);
+                }
+                if name == "producers" && report.producers.is_none() {
+                    if let KnownCustom::Producers(reader) = section.as_known() {
+                        let (producers, truncated) = collect_producers(reader);
+                        report.producers = Some(producers);
+                        report.truncated |= truncated;
+                    }
                 }
                 report
                     .custom_sections
@@ -422,6 +466,72 @@ pub fn artifact_fingerprint(bytes: &[u8]) -> String {
     sha256_hex(bytes)
 }
 
+/// Compute the artifact fingerprint by streaming the file in bounded chunks.
+///
+/// Unlike [`artifact_fingerprint`], this never holds the whole artifact in
+/// memory: peak memory is one [`HASH_CHUNK_BYTES`] buffer, regardless of file
+/// size. The digest is identical to hashing the full contents at once.
+pub fn artifact_fingerprint_file(path: &Path) -> Result<String> {
+    let mut file = std::fs::File::open(path).map_err(|error| {
+        ObservatoryError::Io(std::io::Error::new(
+            error.kind(),
+            format!("{}: {error}", path.display()),
+        ))
+    })?;
+    let mut hasher = Sha256::new();
+    let mut buffer = vec![0u8; HASH_CHUNK_BYTES];
+    loop {
+        let read = file.read(&mut buffer).map_err(|error| {
+            ObservatoryError::Io(std::io::Error::new(
+                error.kind(),
+                format!("{}: {error}", path.display()),
+            ))
+        })?;
+        if read == 0 {
+            break;
+        }
+        hasher.update(&buffer[..read]);
+    }
+    Ok(hex::encode(hasher.finalize()))
+}
+
+/// Decode `producers` entries, bounding the total retained.
+fn collect_producers(reader: wasmparser::ProducersSectionReader<'_>) -> (ProducersInfo, bool) {
+    let mut info = ProducersInfo::default();
+    let mut total = 0usize;
+    let mut truncated = false;
+    for field in reader {
+        let Ok(field) = field else {
+            continue;
+        };
+        let category = field.name;
+        for value in field.values {
+            let Ok(value) = value else {
+                continue;
+            };
+            if total >= MAX_PRODUCER_ENTRIES {
+                truncated = true;
+                break;
+            }
+            let entry = ProducerEntry {
+                name: value.name.to_string(),
+                version: value.version.to_string(),
+            };
+            match category {
+                "language" => info.language.push(entry),
+                "processed-by" => info.processed_by.push(entry),
+                "sdk" => info.sdk.push(entry),
+                _ => continue,
+            }
+            total += 1;
+        }
+        if truncated {
+            break;
+        }
+    }
+    (info, truncated)
+}
+
 fn type_ref_kind(ty: &TypeRef) -> &'static str {
     match ty {
         TypeRef::Func(_) => "func",
@@ -447,7 +557,9 @@ fn external_kind(kind: &ExternalKind) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use observatory_testutil::{minimal_module, module_with_custom_section, CONTRACT_SPEC_SECTION};
+    use observatory_testutil::{
+        minimal_module, module_with_custom_section, module_with_producers, CONTRACT_SPEC_SECTION,
+    };
 
     #[test]
     fn inspects_minimal_module() {
@@ -536,6 +648,7 @@ mod tests {
         assert_eq!(report.memories.len(), 1);
         assert_eq!(report.memories[0].initial_pages, 1);
         assert_eq!(report.memories[0].maximum_pages, Some(2));
+        assert!(!report.memories[0].memory64);
         assert!(report.code_section_bytes > 0);
     }
 
@@ -612,5 +725,63 @@ mod tests {
     fn load_file_bound_is_enforced() {
         let error = load_file(Path::new("does-not-exist.wasm")).unwrap_err();
         assert!(matches!(error, ObservatoryError::Io(_)));
+    }
+
+    #[test]
+    fn streaming_and_in_memory_hashes_match() {
+        let payload = vec![0x42u8; HASH_CHUNK_BYTES * 3 + 17];
+        let module = module_with_custom_section("blob", &payload);
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("artifact.wasm");
+        std::fs::write(&path, &module).unwrap();
+
+        assert_eq!(
+            artifact_fingerprint(&module),
+            artifact_fingerprint_file(&path).unwrap()
+        );
+    }
+
+    #[test]
+    fn streaming_hash_reports_io_errors() {
+        let error = artifact_fingerprint_file(Path::new("does-not-exist.wasm")).unwrap_err();
+        assert!(matches!(error, ObservatoryError::Io(_)));
+    }
+
+    #[test]
+    fn reports_memory64_flag() {
+        let wasm64 = wat::parse_str("(module (memory i64 1 2))").unwrap();
+        let report = inspect(&wasm64).unwrap();
+        assert_eq!(report.memories.len(), 1);
+        assert!(report.memories[0].memory64);
+
+        let wasm32 = wat::parse_str("(module (memory 1 2))").unwrap();
+        let report = inspect(&wasm32).unwrap();
+        assert!(!report.memories[0].memory64);
+    }
+
+    #[test]
+    fn reports_producers_custom_section() {
+        let module = module_with_producers(&[
+            ("language", &[("Rust", "1.80")]),
+            ("processed-by", &[("rustc", "1.80.0")]),
+            ("sdk", &[("soroban-sdk", "21.0.0")]),
+        ]);
+        let report = inspect(&module).unwrap();
+        let producers = report.producers.expect("producers section");
+        assert_eq!(
+            producers.language,
+            vec![ProducerEntry {
+                name: "Rust".to_string(),
+                version: "1.80".to_string(),
+            }]
+        );
+        assert_eq!(producers.processed_by[0].name, "rustc");
+        assert_eq!(producers.sdk[0].name, "soroban-sdk");
+    }
+
+    #[test]
+    fn absent_producers_is_not_an_error() {
+        let report = inspect(&minimal_module()).unwrap();
+        assert!(report.producers.is_none());
     }
 }

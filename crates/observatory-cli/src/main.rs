@@ -465,12 +465,17 @@ fn run(cli: &Cli, format: OutputFormat) -> Result<ObservatoryExit> {
             })
         }
         Command::Fingerprint { wasm } => {
-            let bytes = observatory_wasm::load_file(wasm)?;
-            let artifact = observatory_wasm::artifact_fingerprint(&bytes);
-            let interface = ContractInterface::from_wasm(&bytes)
-                .ok()
-                .map(|interface| interface.fingerprint())
-                .transpose()?;
+            // Hash by streaming so large artifacts are not buffered whole. The
+            // interface fingerprint still needs the bytes; when the artifact
+            // exceeds the load bound it is simply omitted.
+            let artifact = observatory_wasm::artifact_fingerprint_file(wasm)?;
+            let interface = match observatory_wasm::load_file(wasm) {
+                Ok(bytes) => ContractInterface::from_wasm(&bytes)
+                    .ok()
+                    .map(|interface| interface.fingerprint())
+                    .transpose()?,
+                Err(_) => None,
+            };
             let payload = serde_json::json!({
                 "artifact_sha256": artifact,
                 "interface_sha256": interface,
