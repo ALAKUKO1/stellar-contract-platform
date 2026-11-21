@@ -89,6 +89,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - CLI: an unsupported `--config` file extension is an unsupported-feature error
   (exit code `5`), not a usage error (`2`).
 
+### Documentation
+
+- API: documented the version lifecycle in `docs/API.md`, covering how versions
+  are added, deprecated, and retired, notice expectations, and the separate roles
+  of the API version and `schema_version`. No calendar dates are promised.
+
 ## [0.1.0] - 2026-10-28
 
 First tagged release. Linux x86_64, macOS arm64, and Windows x86_64 archives
