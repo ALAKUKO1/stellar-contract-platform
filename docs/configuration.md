@@ -54,6 +54,13 @@ api:
     allowed_methods: [GET, POST, PATCH, DELETE]
     allowed_headers: [content-type, authorization, x-api-key]
 
+audit:
+  enabled:                # default: all non-experimental rules
+    - spec.error
+    - artifact.no-code
+  severity:
+    artifact.no-code: ERROR
+
 ci:
   fail_on: MISMATCH       # statuses that should fail a build
 
@@ -98,6 +105,8 @@ window_secs = 60
 | `api.rate_limit` | Default rate limit for `api serve`. |
 | `api.route_limits` | Per-route rate-limit overrides, keyed by exact request path. Unlisted routes use `api.rate_limit`. |
 | `api.cors` | Cross-origin allow-list for `api serve`; empty denies all origins. |
+| `audit.enabled` | Rule allow-list for `inspect --security`; defaults to every non-experimental rule. |
+| `audit.severity` | Per-rule `WARN`/`ERROR` overrides for `inspect --security`. |
 | `rpc.endpoint` | Default endpoint for `deployment inspect` when neither `--rpc-url` nor a profile overrides it. Validated and recorded; live transport is future work. |
 | `profiles.<network>.endpoint` | Endpoint override when that profile is selected. |
 | `profiles.<network>.policy` | Compatibility-policy override when that profile is selected. |
@@ -119,6 +128,7 @@ window_secs = 60
 - A profile `policy` other than `strict` or `lenient` is an error.
 - A profile `endpoint` must be a valid `https` endpoint (loopback `http` is allowed).
 - Selecting an unknown profile is an error.
+- An unknown `audit.enabled` or `audit.severity` rule id is an error.
 - An unsupported file extension is an unsupported-feature error (exit code `5`).
 
 `analysis.compatibility.policy` accepts only the `strict` and `lenient` presets.

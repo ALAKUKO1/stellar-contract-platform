@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Audit: the `audit` configuration block controls which rules run and their
+  severity. `enabled` is an allow-list that defaults to every non-experimental
+  rule, `severity` overrides `WARN`/`ERROR` per rule, and unknown rule ids are
+  rejected. `inspect --security` honours the block. See `docs/security.md`.
 - Configuration: per-network profiles under `profiles`, keyed by network name
   and selected with `--profile` or the `profile` field. A profile can override
   `rpc.endpoint` and `analysis.compatibility.policy`; malformed profile names,

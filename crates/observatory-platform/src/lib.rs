@@ -23,7 +23,7 @@ pub mod webhook_delivery;
 
 pub use audit::{AuditEvent, AuditLog};
 pub use auth::{ApiKeyRecord, ApiKeyStore, KeyStore, Principal};
-pub use config::{CorsConfig, PlatformConfig};
+pub use config::{AuditConfig, CorsConfig, NetworkProfile, PlatformConfig};
 pub use jobs::{Job, JobQueue, JobState};
 pub use observatory_compat::CompatibilityPolicy;
 pub use policy::{load_policy, parse_policy};

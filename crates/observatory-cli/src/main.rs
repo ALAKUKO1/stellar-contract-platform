@@ -334,10 +334,13 @@ fn run(cli: &Cli, format: OutputFormat) -> Result<ObservatoryExit> {
             let bytes = observatory_wasm::load_file(wasm)?;
             let report = observatory_wasm::inspect(&bytes)?;
             let interface = ContractInterface::from_wasm(&bytes).ok();
-            let mut audit = observatory_audit::audit_artifact(&report);
+            let mut audit = observatory_audit::audit_artifact_with_config(&report, &project.audit)?;
             if *security {
                 if let Some(interface) = &interface {
-                    audit = audit.merge(observatory_audit::audit_interface(interface));
+                    audit = audit.merge(observatory_audit::audit_interface_with_config(
+                        interface,
+                        &project.audit,
+                    )?);
                 }
             }
             let section = match dump_section {

@@ -8,6 +8,8 @@ use serde_json::Value;
 
 use crate::ratelimit::RateLimitConfig;
 
+pub use observatory_audit::AuditConfig;
+
 /// Configuration for the platform/API layer.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]

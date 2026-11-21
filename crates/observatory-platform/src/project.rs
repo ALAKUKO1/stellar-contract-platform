@@ -10,7 +10,7 @@ use std::path::{Path, PathBuf};
 use observatory_core::{Network, ObservatoryError, Result};
 use serde::{Deserialize, Serialize};
 
-use crate::config::{validate_profile_name, NetworkProfile};
+use crate::config::{validate_profile_name, AuditConfig, NetworkProfile};
 use crate::ratelimit::RateLimitConfig;
 use crate::rbac::Role;
 
@@ -41,6 +41,9 @@ pub struct ProjectConfig {
     /// CI defaults.
     #[serde(default)]
     pub ci: CiSection,
+    /// Audit rule selection and severity overrides.
+    #[serde(default)]
+    pub audit: AuditConfig,
     /// Named per-network override profiles, keyed by network name.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub profiles: BTreeMap<String, NetworkProfile>,
@@ -246,6 +249,7 @@ impl ProjectConfig {
 
     /// Validate profile names and overrides, and the selected profile.
     fn validate(&self) -> Result<()> {
+        self.audit.validate()?;
         for (name, profile) in &self.profiles {
             validate_profile_name(name)?;
             profile.validate()?;

@@ -58,6 +58,27 @@ checks report each duplicated name once.
 
 Rules marked `experimental` may change. Heuristic ids are stable for CI.
 
+### Configuration
+
+`inspect --security` reads the `audit` block from the project configuration:
+
+```yaml
+audit:
+  enabled:              # default: every non-experimental rule
+    - spec.error
+    - artifact.no-code
+  severity:
+    artifact.no-code: ERROR
+```
+
+- `enabled` is an allow-list. A rule not listed is skipped. When the field is
+  absent, all non-experimental rules run and experimental rules are skipped;
+  list an experimental rule by id to opt in.
+- `severity` replaces a rule's default severity (`WARN` or `ERROR`) after the
+  rule runs. Overriding `WARN` to `ERROR` can change the overall audit status.
+- Every id must appear in the rule table and in the crate's `RULE_IDS` registry.
+  An unknown id is a configuration error, not a silently ignored rule.
+
 > These checks are **not** a security audit and provide no guarantees. They catch
 > structural inconsistencies, nothing more.
 
