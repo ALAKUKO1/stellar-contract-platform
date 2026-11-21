@@ -1,5 +1,7 @@
 //! Platform configuration with strict validation.
 
+use std::collections::BTreeMap;
+
 use observatory_core::{ObservatoryError, Result};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -13,9 +15,14 @@ pub struct PlatformConfig {
     /// Whether analysis endpoints require authentication.
     #[serde(default = "default_true")]
     pub require_auth: bool,
-    /// Rate limiting configuration.
+    /// Default rate limit applied to any route without an override.
     #[serde(default)]
     pub rate_limit: RateLimitConfig,
+    /// Optional per-route limits, keyed by exact request path.
+    ///
+    /// A route not listed here falls back to [PlatformConfig::rate_limit].
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub route_limits: BTreeMap<String, RateLimitConfig>,
     /// Cross-origin resource sharing policy. Denies all origins by default.
     #[serde(default)]
     pub cors: CorsConfig,
@@ -30,6 +37,7 @@ impl Default for PlatformConfig {
         PlatformConfig {
             require_auth: true,
             rate_limit: RateLimitConfig::default(),
+            route_limits: BTreeMap::new(),
             cors: CorsConfig::default(),
         }
     }
@@ -111,6 +119,17 @@ impl PlatformConfig {
         serde_json::from_value(value.clone()).map_err(|error| {
             ObservatoryError::invalid(format!("invalid platform configuration: {error}"))
         })
+    }
+
+    /// The effective limit for path.
+    ///
+    /// Exact-path overrides win; otherwise the global default applies.
+    #[must_use]
+    pub fn rate_limit_for(&self, path: &str) -> RateLimitConfig {
+        self.route_limits
+            .get(path)
+            .copied()
+            .unwrap_or(self.rate_limit)
     }
 }
 
