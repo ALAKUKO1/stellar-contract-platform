@@ -14,6 +14,7 @@ use std::collections::{BTreeMap, VecDeque};
 use observatory_core::{ObservatoryError, Result};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
+use stellar_xdr::{LedgerEntryData, Limits, ReadXdr, ScVal};
 
 pub mod net;
 
@@ -182,6 +183,72 @@ pub struct LedgerEntryResult {
     pub live_until_ledger_seq: Option<u32>,
 }
 
+/// The contract-data durability keyspace.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum Durability {
+    /// Persistent storage, the default.
+    #[default]
+    Persistent,
+    /// Temporary storage, which may expire.
+    Temporary,
+}
+
+impl Durability {
+    /// The wire value used by `getContractData`.
+    #[must_use]
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Durability::Persistent => "persistent",
+            Durability::Temporary => "temporary",
+        }
+    }
+}
+
+/// A request for `getContractData`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct GetContractDataRequest {
+    /// Contract id (a `C...` strkey).
+    pub contract_id: String,
+    /// Base64 XDR of the `ScVal` storage key.
+    pub key: String,
+    /// The durability keyspace to read from.
+    #[serde(default)]
+    pub durability: Durability,
+}
+
+impl GetContractDataRequest {
+    /// Build a request against the persistent keyspace.
+    #[must_use]
+    pub fn new(contract_id: impl Into<String>, key: impl Into<String>) -> Self {
+        GetContractDataRequest {
+            contract_id: contract_id.into(),
+            key: key.into(),
+            durability: Durability::Persistent,
+        }
+    }
+
+    /// Read from a different durability keyspace.
+    #[must_use]
+    pub fn with_durability(mut self, durability: Durability) -> Self {
+        self.durability = durability;
+        self
+    }
+}
+
+/// A single contract-data entry returned by `getContractData`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ContractDataResult {
+    /// Base64 XDR of the `LedgerEntryData`.
+    pub xdr: String,
+    /// Last modified ledger sequence.
+    pub last_modified_ledger_seq: Option<u32>,
+    /// Live-until ledger sequence.
+    pub live_until_ledger_seq: Option<u32>,
+    /// Sequence of the latest ledger known to the server.
+    pub latest_ledger: Option<u32>,
+}
+
 /// A typed RPC client over a [`Transport`].
 #[derive(Debug, Clone)]
 pub struct RpcClient<T: Transport> {
@@ -291,6 +358,75 @@ impl<T: Transport> RpcClient<T> {
             })
             .collect())
     }
+
+    /// Fetch one contract-data ledger entry.
+    ///
+    /// The contract id must be a `C...` strkey and `request.key` must be base64
+    /// XDR of an `ScVal`. The returned entry XDR is decoded and must be a
+    /// contract-data entry, so an unexpected response is rejected instead of
+    /// being passed on as opaque bytes.
+    pub fn get_contract_data(
+        &self,
+        request: &GetContractDataRequest,
+    ) -> Result<ContractDataResult> {
+        validate_contract_id(&request.contract_id)?;
+        let key = request.key.trim();
+        if key.is_empty() {
+            return Err(ObservatoryError::invalid(
+                "contract data key must not be empty",
+            ));
+        }
+        ScVal::from_xdr_base64(key, Limits::none()).map_err(|error| {
+            ObservatoryError::invalid(format!("invalid contract data key XDR: {error}"))
+        })?;
+
+        let result = self.call(
+            "getContractData",
+            json!({
+                "contractId": request.contract_id.trim(),
+                "key": key,
+                "durability": request.durability.as_str(),
+            }),
+        )?;
+        let xdr = result
+            .get("xdr")
+            .and_then(Value::as_str)
+            .ok_or_else(|| ObservatoryError::rpc("getContractData response had no xdr field"))?;
+        let entry = LedgerEntryData::from_xdr_base64(xdr, Limits::none()).map_err(|error| {
+            ObservatoryError::decode(format!("invalid contract data entry XDR: {error}"))
+        })?;
+        if !matches!(entry, LedgerEntryData::ContractData(_)) {
+            return Err(ObservatoryError::decode(
+                "getContractData response was not a contract data entry",
+            ));
+        }
+        Ok(ContractDataResult {
+            xdr: xdr.to_string(),
+            last_modified_ledger_seq: result
+                .get("lastModifiedLedgerSeq")
+                .and_then(Value::as_u64)
+                .map(|value| value as u32),
+            live_until_ledger_seq: result
+                .get("liveUntilLedgerSeq")
+                .and_then(Value::as_u64)
+                .map(|value| value as u32),
+            latest_ledger: result
+                .get("latestLedger")
+                .and_then(Value::as_u64)
+                .map(|value| value as u32),
+        })
+    }
+}
+
+fn validate_contract_id(input: &str) -> Result<()> {
+    let parsed = stellar_strkey::Strkey::from_string(input.trim())
+        .map_err(|error| ObservatoryError::invalid(format!("invalid contract id: {error}")))?;
+    if !matches!(parsed, stellar_strkey::Strkey::Contract(_)) {
+        return Err(ObservatoryError::invalid(
+            "provided strkey is not a contract id (expected a C... strkey)",
+        ));
+    }
+    Ok(())
 }
 
 /// A deterministic in-memory transport for tests.
@@ -566,5 +702,137 @@ mod tests {
 
         let metadata = Endpoint::parse("https://169.254.169.254").unwrap();
         assert!(metadata.validate_ssrf(&SsrfPolicy::local()).is_err());
+    }
+
+    fn contract_id() -> String {
+        format!("{}", stellar_strkey::Contract([9u8; 32]))
+    }
+
+    fn contract_data_entry() -> stellar_xdr::ContractDataEntry {
+        use stellar_xdr::{
+            ContractDataDurability, ContractDataEntry, ContractId, Hash, ScAddress, ScVal,
+        };
+        ContractDataEntry {
+            ext: stellar_xdr::ExtensionPoint::V0,
+            contract: ScAddress::Contract(ContractId(Hash([9u8; 32]))),
+            key: ScVal::LedgerKeyContractInstance,
+            durability: ContractDataDurability::Persistent,
+            val: ScVal::Bool(true),
+        }
+    }
+
+    #[test]
+    fn get_contract_data_decodes_a_fixture() {
+        use stellar_xdr::WriteXdr;
+        let xdr = stellar_xdr::LedgerEntryData::ContractData(contract_data_entry())
+            .to_xdr_base64(Limits::none())
+            .unwrap();
+        let fixture = json!({
+            "getContractData": {
+                "xdr": xdr,
+                "lastModifiedLedgerSeq": 11,
+                "liveUntilLedgerSeq": 22,
+                "latestLedger": 33
+            }
+        });
+        let client = RpcClient::new(
+            Endpoint::parse("https://example.org").unwrap(),
+            MockTransport::from_json(&fixture).unwrap(),
+        );
+        let request = GetContractDataRequest::new(
+            contract_id(),
+            ScVal::LedgerKeyContractInstance
+                .to_xdr_base64(Limits::none())
+                .unwrap(),
+        );
+        let result = client.get_contract_data(&request).unwrap();
+        assert_eq!(result.last_modified_ledger_seq, Some(11));
+        assert_eq!(result.live_until_ledger_seq, Some(22));
+        assert_eq!(result.latest_ledger, Some(33));
+        assert_eq!(result.xdr, xdr);
+    }
+
+    #[test]
+    fn get_contract_data_builds_the_documented_request() {
+        use stellar_xdr::WriteXdr;
+        struct Capture(RefCell<Option<Value>>);
+        impl Transport for Capture {
+            fn send(&self, request: &Value) -> Result<Value> {
+                *self.0.borrow_mut() = Some(request.clone());
+                let xdr = stellar_xdr::LedgerEntryData::ContractData(contract_data_entry())
+                    .to_xdr_base64(Limits::none())
+                    .unwrap();
+                Ok(json!({ "jsonrpc": "2.0", "id": 1, "result": { "xdr": xdr } }))
+            }
+        }
+        let transport = Capture(RefCell::new(None));
+        let client = RpcClient::new(Endpoint::parse("https://example.org").unwrap(), &transport);
+        let key = ScVal::LedgerKeyContractInstance
+            .to_xdr_base64(Limits::none())
+            .unwrap();
+        client
+            .get_contract_data(
+                &GetContractDataRequest::new(contract_id(), key.clone())
+                    .with_durability(Durability::Temporary),
+            )
+            .unwrap();
+        let request = transport.0.borrow().clone().expect("request captured");
+        assert_eq!(request["method"], "getContractData");
+        assert_eq!(request["params"]["contractId"], contract_id());
+        assert_eq!(request["params"]["key"], key);
+        assert_eq!(request["params"]["durability"], "temporary");
+    }
+
+    #[test]
+    fn get_contract_data_normalizes_rpc_errors() {
+        use stellar_xdr::WriteXdr;
+        let fixture = json!({
+            "getContractData": { "__error": { "code": -32000, "message": "entry not found" } }
+        });
+        let transport = MockTransport::from_json(&fixture).unwrap();
+        let client = RpcClient::new(Endpoint::parse("https://example.org").unwrap(), transport);
+        let key = ScVal::LedgerKeyContractInstance
+            .to_xdr_base64(Limits::none())
+            .unwrap();
+        let request = GetContractDataRequest::new(contract_id(), key);
+        let error = client.get_contract_data(&request).unwrap_err();
+        assert!(matches!(error, ObservatoryError::Rpc(_)));
+        assert!(error.to_string().contains("entry not found"), "{error}");
+    }
+
+    #[test]
+    fn get_contract_data_rejects_invalid_input_before_calling() {
+        use stellar_xdr::WriteXdr;
+        let transport = MockTransport::new();
+        let client = RpcClient::new(Endpoint::parse("https://example.org").unwrap(), &transport);
+        let key = ScVal::LedgerKeyContractInstance
+            .to_xdr_base64(Limits::none())
+            .unwrap();
+
+        let bad_key = GetContractDataRequest::new(contract_id(), "not-xdr");
+        let error = client.get_contract_data(&bad_key).unwrap_err();
+        assert!(matches!(error, ObservatoryError::InvalidInput(_)));
+
+        let bad_contract = GetContractDataRequest::new("not-a-contract", key.clone());
+        let error = client.get_contract_data(&bad_contract).unwrap_err();
+        assert!(matches!(error, ObservatoryError::InvalidInput(_)));
+
+        let empty_key = GetContractDataRequest::new(contract_id(), "");
+        assert!(client.get_contract_data(&empty_key).is_err());
+        assert!(transport.calls().is_empty());
+    }
+
+    #[test]
+    fn get_contract_data_rejects_an_invalid_entry_response() {
+        use stellar_xdr::WriteXdr;
+        let fixture = json!({ "getContractData": { "xdr": "AAAA" } });
+        let transport = MockTransport::from_json(&fixture).unwrap();
+        let client = RpcClient::new(Endpoint::parse("https://example.org").unwrap(), transport);
+        let key = ScVal::LedgerKeyContractInstance
+            .to_xdr_base64(Limits::none())
+            .unwrap();
+        let request = GetContractDataRequest::new(contract_id(), key);
+        let error = client.get_contract_data(&request).unwrap_err();
+        assert!(matches!(error, ObservatoryError::Decode(_)));
     }
 }
