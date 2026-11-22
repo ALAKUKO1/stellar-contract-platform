@@ -106,8 +106,11 @@ pub fn parse_entries(bytes: &[u8]) -> Result<Vec<ScSpecEntry>> {
                  {decoded} {noun} decoded before it (expected a kind in 0..=5)"
             )));
         }
-        let entry = ScSpecEntry::read_xdr(&mut limited)
-            .map_err(|error| ObservatoryError::spec(format!("invalid spec entry: {error}")))?;
+        let entry = ScSpecEntry::read_xdr(&mut limited).map_err(|error| {
+            ObservatoryError::spec(format!(
+                "invalid spec entry at byte offset {offset}: {error}"
+            ))
+        })?;
         entries.push(entry);
     }
     Ok(entries)
@@ -554,6 +557,76 @@ mod tests {
     fn truncated_entry_discriminant_is_a_spec_error() {
         let error = parse_entries(&[0, 0, 0]).unwrap_err();
         assert!(matches!(error, ObservatoryError::Spec(_)));
+    }
+
+    #[test]
+    fn trailing_single_byte_is_rejected() {
+        let mut bytes = encode_spec_entries(&sample_entries());
+        let offset = bytes.len();
+        bytes.push(0);
+        let error = parse_entries(&bytes).unwrap_err();
+        let ObservatoryError::Spec(message) = error else {
+            panic!("expected spec error, got {error:?}");
+        };
+        assert!(
+            message.contains(&format!("truncated spec entry at byte offset {offset}")),
+            "{message}"
+        );
+    }
+
+    #[test]
+    fn trailing_incomplete_discriminant_is_rejected() {
+        let mut bytes = encode_spec_entries(&sample_entries());
+        let offset = bytes.len();
+        bytes.extend_from_slice(&[0, 0, 0]);
+        let error = parse_entries(&bytes).unwrap_err();
+        let ObservatoryError::Spec(message) = error else {
+            panic!("expected spec error, got {error:?}");
+        };
+        assert!(
+            message.contains(&format!("truncated spec entry at byte offset {offset}")),
+            "{message}"
+        );
+    }
+
+    #[test]
+    fn trailing_partial_entry_is_rejected() {
+        let trailing =
+            encode_spec_entries(&[spec_struct("Trailing", &[("value", ScSpecTypeDef::U32)])]);
+        let mut bytes = encode_spec_entries(&[spec_function("transfer", &[], None)]);
+        let offset = bytes.len();
+        bytes.extend_from_slice(&trailing[..trailing.len() - 1]);
+        let error = parse_entries(&bytes).unwrap_err();
+        let ObservatoryError::Spec(message) = error else {
+            panic!("expected spec error, got {error:?}");
+        };
+        assert!(
+            message.contains(&format!("invalid spec entry at byte offset {offset}")),
+            "{message}"
+        );
+    }
+
+    #[test]
+    fn zero_padding_after_a_valid_entry_is_rejected() {
+        let mut bytes = encode_spec_entries(&[spec_function("transfer", &[], None)]);
+        let offset = bytes.len();
+        bytes.extend_from_slice(&[0, 0, 0, 0]);
+        let error = parse_entries(&bytes).unwrap_err();
+        let ObservatoryError::Spec(message) = error else {
+            panic!("expected spec error, got {error:?}");
+        };
+        assert!(
+            message.contains(&format!("invalid spec entry at byte offset {offset}")),
+            "{message}"
+        );
+    }
+
+    #[test]
+    fn valid_multi_entry_stream_is_unaffected() {
+        let expected = sample_entries();
+        let entries = parse_entries(&encode_spec_entries(&expected)).unwrap();
+        assert_eq!(entries.len(), expected.len());
+        assert!(parse_entries(&[]).unwrap().is_empty());
     }
 
     #[test]
