@@ -96,6 +96,60 @@ impl ContractInterface {
             && self.events.is_empty()
     }
 
+    /// Whether every entity in `self` structurally exists, identically, in
+    /// `other`.
+    ///
+    /// A function/type/event is considered identical when its **canonical
+    /// shape** matches: the same name, the same ordered parameters/fields/cases,
+    /// the same type references, and the same event prefix topics, parameter
+    /// locations, and data format. Documentation strings are not part of the
+    /// shape and are ignored.
+    ///
+    /// This is a **structural** relation, not a behavioral one. It says nothing
+    /// about implementation, gas cost, or runtime semantics: two contracts can
+    /// expose the same structural interface and behave differently. It is also
+    /// not a compatibility verdict; see `observatory-compat` for that.
+    ///
+    /// The check is deterministic and does not depend on declaration order.
+    #[must_use]
+    pub fn is_subset_of(&self, other: &ContractInterface) -> bool {
+        self.functions.iter().all(|item| {
+            other
+                .function(&item.name)
+                .is_some_and(|candidate| function_shape(item) == function_shape(candidate))
+        }) && self.structs.iter().all(|item| {
+            other
+                .structs
+                .iter()
+                .find(|candidate| candidate.name == item.name)
+                .is_some_and(|candidate| struct_shape(item) == struct_shape(candidate))
+        }) && self.unions.iter().all(|item| {
+            other
+                .unions
+                .iter()
+                .find(|candidate| candidate.name == item.name)
+                .is_some_and(|candidate| union_shape(item) == union_shape(candidate))
+        }) && self.enums.iter().all(|item| {
+            other
+                .enums
+                .iter()
+                .find(|candidate| candidate.name == item.name)
+                .is_some_and(|candidate| enum_shape(item) == enum_shape(candidate))
+        }) && self.error_enums.iter().all(|item| {
+            other
+                .error_enums
+                .iter()
+                .find(|candidate| candidate.name == item.name)
+                .is_some_and(|candidate| error_enum_shape(item) == error_enum_shape(candidate))
+        }) && self.events.iter().all(|item| {
+            other
+                .events
+                .iter()
+                .find(|candidate| candidate.name == item.name)
+                .is_some_and(|candidate| event_shape(item) == event_shape(candidate))
+        })
+    }
+
     /// Find a function by name.
     #[must_use]
     pub fn function(&self, name: &str) -> Option<&SpecFunction> {
@@ -164,6 +218,51 @@ impl ContractInterface {
             events: self.events.clone(),
         }
     }
+}
+
+fn function_shape(function: &SpecFunction) -> SpecFunction {
+    let mut shape = function.clone();
+    shape.doc.clear();
+    for input in &mut shape.inputs {
+        input.doc.clear();
+    }
+    shape
+}
+
+fn struct_shape(item: &SpecStruct) -> SpecStruct {
+    let mut shape = item.clone();
+    shape.doc.clear();
+    for field in &mut shape.fields {
+        field.doc.clear();
+    }
+    shape
+}
+
+fn union_shape(item: &SpecUnion) -> SpecUnion {
+    let mut shape = item.clone();
+    shape.doc.clear();
+    for case in &mut shape.cases {
+        case.doc.clear();
+    }
+    shape
+}
+
+fn enum_shape(item: &SpecEnum) -> SpecEnum {
+    let mut shape = item.clone();
+    shape.doc.clear();
+    shape
+}
+
+fn error_enum_shape(item: &SpecErrorEnum) -> SpecErrorEnum {
+    let mut shape = item.clone();
+    shape.doc.clear();
+    shape
+}
+
+fn event_shape(item: &SpecEvent) -> SpecEvent {
+    let mut shape = item.clone();
+    shape.doc.clear();
+    shape
 }
 
 /// Whether `ty` references a named user-defined type.
@@ -250,6 +349,127 @@ mod tests {
             interface.type_names(),
             vec!["E".to_string(), "S".to_string()]
         );
+    }
+
+    #[test]
+    fn subset_requires_every_entity_to_match() {
+        use observatory_testutil::spec::{spec_error_enum, spec_event, spec_union};
+        use stellar_xdr::ScSpecEventParamLocationV0;
+
+        let subset = ContractInterface::from_spec(spec(vec![
+            spec_function(
+                "ping",
+                &[("n", ScSpecTypeDef::U32)],
+                Some(ScSpecTypeDef::Bool),
+            ),
+            spec_struct("Config", &[("owner", ScSpecTypeDef::Address)]),
+            spec_enum("Status", &[("Active", 0), ("Paused", 1)]),
+            spec_union(
+                "Payload",
+                &[("None", None), ("Some", Some(vec![ScSpecTypeDef::U32]))],
+            ),
+            spec_error_enum("Error", &[("NotFound", 1)]),
+            spec_event(
+                "transfer",
+                &["transfer", "v1"],
+                &[(
+                    "amount",
+                    ScSpecTypeDef::I128,
+                    ScSpecEventParamLocationV0::Data,
+                )],
+            ),
+        ]));
+        let superset = ContractInterface::from_spec(spec(vec![
+            spec_function(
+                "ping",
+                &[("n", ScSpecTypeDef::U32)],
+                Some(ScSpecTypeDef::Bool),
+            ),
+            spec_function("extra", &[], None),
+            spec_struct("Config", &[("owner", ScSpecTypeDef::Address)]),
+            spec_struct("Extra", &[("value", ScSpecTypeDef::U64)]),
+            spec_enum("Status", &[("Active", 0), ("Paused", 1)]),
+            spec_union(
+                "Payload",
+                &[("None", None), ("Some", Some(vec![ScSpecTypeDef::U32]))],
+            ),
+            spec_error_enum("Error", &[("NotFound", 1)]),
+            spec_event(
+                "transfer",
+                &["transfer", "v1"],
+                &[(
+                    "amount",
+                    ScSpecTypeDef::I128,
+                    ScSpecEventParamLocationV0::Data,
+                )],
+            ),
+        ]));
+
+        assert!(subset.is_subset_of(&superset));
+        assert!(!superset.is_subset_of(&subset));
+        assert!(subset.is_subset_of(&subset));
+    }
+
+    #[test]
+    fn subset_rejects_shape_changes_and_missing_entities() {
+        use observatory_testutil::spec::spec_event;
+        use stellar_xdr::ScSpecEventParamLocationV0;
+
+        let base = ContractInterface::from_spec(spec(vec![
+            spec_function("f", &[("x", ScSpecTypeDef::U32)], None),
+            spec_struct("S", &[("a", ScSpecTypeDef::U32)]),
+        ]));
+
+        let changed_parameter = ContractInterface::from_spec(spec(vec![
+            spec_function("f", &[("x", ScSpecTypeDef::U64)], None),
+            spec_struct("S", &[("a", ScSpecTypeDef::U32)]),
+        ]));
+        let changed_field = ContractInterface::from_spec(spec(vec![
+            spec_function("f", &[("x", ScSpecTypeDef::U32)], None),
+            spec_struct("S", &[("a", ScSpecTypeDef::Bool)]),
+        ]));
+        let missing_entity = ContractInterface::from_spec(spec(vec![spec_function(
+            "f",
+            &[("x", ScSpecTypeDef::U32)],
+            None,
+        )]));
+        let different_event = ContractInterface::from_spec(spec(vec![
+            spec_function("f", &[("x", ScSpecTypeDef::U32)], None),
+            spec_struct("S", &[("a", ScSpecTypeDef::U32)]),
+            spec_event(
+                "evt",
+                &["one"],
+                &[(
+                    "amount",
+                    ScSpecTypeDef::I128,
+                    ScSpecEventParamLocationV0::Data,
+                )],
+            ),
+        ]));
+
+        assert!(!base.is_subset_of(&changed_parameter));
+        assert!(!base.is_subset_of(&changed_field));
+        assert!(!base.is_subset_of(&missing_entity));
+        assert!(!different_event.is_subset_of(&base));
+    }
+
+    #[test]
+    fn subset_ignores_documentation() {
+        let plain = ContractInterface::from_spec(spec(vec![spec_function(
+            "f",
+            &[("x", ScSpecTypeDef::U32)],
+            None,
+        )]));
+        let documented = {
+            use stellar_xdr::StringM;
+            let mut entry = spec_function("f", &[("x", ScSpecTypeDef::U32)], None);
+            if let ScSpecEntry::FunctionV0(function) = &mut entry {
+                function.doc = StringM::try_from("docs").unwrap();
+            }
+            ContractInterface::from_spec(spec(vec![entry]))
+        };
+        assert!(plain.is_subset_of(&documented));
+        assert!(documented.is_subset_of(&plain));
     }
 
     #[test]

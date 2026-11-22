@@ -352,6 +352,64 @@ pub fn verify_local_vs_deployed<T: Transport>(
     })
 }
 
+/// Aggregate counts for a batch verification.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Default)]
+pub struct BatchSummary {
+    /// Number of artifacts verified.
+    pub total: usize,
+    /// Artifacts whose hashes matched.
+    pub matched: usize,
+    /// Artifacts whose hashes did not match.
+    pub mismatched: usize,
+    /// Artifacts with insufficient data.
+    pub insufficient_data: usize,
+    /// Artifacts whose verification could not be completed.
+    pub errors: usize,
+}
+
+/// The summarized result of verifying several artifacts in one run.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct BatchVerification {
+    /// Per-artifact results, in manifest order.
+    pub results: Vec<VerificationResult>,
+    /// Aggregate counts.
+    pub summary: BatchSummary,
+}
+
+impl BatchVerification {
+    /// Summarize per-artifact results.
+    #[must_use]
+    pub fn from_results(results: Vec<VerificationResult>) -> Self {
+        let mut summary = BatchSummary {
+            total: results.len(),
+            ..BatchSummary::default()
+        };
+        for result in &results {
+            match result.status {
+                VerificationStatus::Match => summary.matched += 1,
+                VerificationStatus::Mismatch => summary.mismatched += 1,
+                VerificationStatus::InsufficientData => summary.insufficient_data += 1,
+                VerificationStatus::Error => summary.errors += 1,
+            }
+        }
+        BatchVerification { results, summary }
+    }
+
+    /// The aggregate status: errors dominate, then mismatches, then missing data.
+    #[must_use]
+    pub fn status(&self) -> VerificationStatus {
+        if self.summary.errors > 0 {
+            VerificationStatus::Error
+        } else if self.summary.mismatched > 0 {
+            VerificationStatus::Mismatch
+        } else if self.summary.insufficient_data > 0 {
+            VerificationStatus::InsufficientData
+        } else {
+            VerificationStatus::Match
+        }
+    }
+}
+
 /// A source of deployed contract code, keyed by executable hash.
 ///
 /// Live RPC fetching is blocked on issue #14; this trait keeps the interface

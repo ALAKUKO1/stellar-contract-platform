@@ -140,3 +140,32 @@ Every `--json` report has the shape:
 ```
 
 Errors serialize as `{ "schema_version", "kind": "error", "code", "message" }`.
+
+## Batch verification
+
+`verify batch <MANIFEST>` verifies several artifacts against the same
+fixture-backed RPC transport and exits with an aggregate status (`0` all match,
+`7` any mismatch, `8` insufficient data). The manifest is JSON:
+
+```json
+{
+  "entries": [
+    {
+      "artifact": "contracts/token.wasm",
+      "contract": "C...",
+      "rpc_fixture": "fixtures/rpc/token.json",
+      "network": "testnet"
+    },
+    {
+      "artifact": "contracts/vault.wasm",
+      "contract": "C...",
+      "rpc_fixture": "fixtures/rpc/vault.json"
+    }
+  ]
+}
+```
+
+`network` is optional per entry and falls back to `--network`, then the project
+configuration, then `testnet`. The JSON report (`kind: verify.batch`) contains
+each result plus `summary.total`, `matched`, `mismatched`, and
+`insufficient_data`. No artifact or repository file is written.

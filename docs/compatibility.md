@@ -18,8 +18,10 @@ with reasons. It is intentionally not a boolean.
 | Removing a function | incompatible | note |
 | Changing a function signature | incompatible | note |
 | Removing a type | incompatible | note |
+| Renaming a type (identical shape) | incompatible | note |
 | Changing a type definition | incompatible | note |
 | Removing an event | incompatible | note |
+| Renaming an event (identical shape) | incompatible | note |
 | Changing an event | incompatible | note |
 | Adding a function, type, or event | compatible | compatible |
 | Documentation-only change | compatible | compatible |

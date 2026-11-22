@@ -14,8 +14,10 @@
 //! | Removing a function | incompatible |
 //! | Changing a function signature (parameters or return type) | incompatible |
 //! | Removing a type | incompatible |
+//! | Renaming a type (identical shape) | incompatible |
 //! | Changing a type definition | incompatible |
 //! | Removing an event | incompatible |
+//! | Renaming an event (identical shape) | incompatible |
 //! | Changing an event | incompatible |
 //! | Adding a function, type, or event | compatible |
 //! | Documentation-only changes | compatible (informational) |
@@ -105,9 +107,9 @@ impl CompatibilityPolicy {
             ChangeKind::FunctionRenamed | ChangeKind::FunctionChanged => {
                 self.signature_change_is_breaking
             }
-            ChangeKind::TypeRemoved => self.type_removal_is_breaking,
+            ChangeKind::TypeRemoved | ChangeKind::TypeRenamed => self.type_removal_is_breaking,
             ChangeKind::TypeChanged => self.type_change_is_breaking,
-            ChangeKind::EventRemoved => self.event_removal_is_breaking,
+            ChangeKind::EventRemoved | ChangeKind::EventRenamed => self.event_removal_is_breaking,
             ChangeKind::EventChanged => self.event_change_is_breaking,
             ChangeKind::FunctionAdded | ChangeKind::TypeAdded | ChangeKind::EventAdded => false,
         }
