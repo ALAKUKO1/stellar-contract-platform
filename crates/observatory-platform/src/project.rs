@@ -4,7 +4,7 @@
 //! typo cannot silently disable a setting. The schema is intentionally small and
 //! only exposes settings that the implementation actually honours.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
 use observatory_core::{Network, ObservatoryError, Result};
@@ -180,6 +180,42 @@ pub struct CiSection {
     pub fail_on: Option<String>,
 }
 
+impl CiSection {
+    /// Resolve the statuses that fail a build.
+    ///
+    /// Defaults to every failing status; `MATCH` is rejected because a match
+    /// never fails a build.
+    pub fn failure_statuses(&self) -> Result<BTreeSet<String>> {
+        let Some(fail_on) = &self.fail_on else {
+            return Ok(["MISMATCH", "INSUFFICIENT_DATA", "ERROR"]
+                .into_iter()
+                .map(str::to_string)
+                .collect());
+        };
+        let mut statuses = BTreeSet::new();
+        for status in fail_on.split(',') {
+            let status = status.trim().to_ascii_uppercase();
+            match status.as_str() {
+                "MISMATCH" | "INSUFFICIENT_DATA" | "ERROR" => {
+                    statuses.insert(status);
+                }
+                "MATCH" => {
+                    return Err(ObservatoryError::invalid(
+                        "ci.fail_on cannot include MATCH; a match never fails the build",
+                    ))
+                }
+                other => {
+                    return Err(ObservatoryError::invalid(format!(
+                        "unknown verification status `{other}` in ci.fail_on; \
+                         expected MISMATCH, INSUFFICIENT_DATA, or ERROR"
+                    )))
+                }
+            }
+        }
+        Ok(statuses)
+    }
+}
+
 /// A supported configuration file format.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ConfigFormat {
@@ -247,9 +283,20 @@ impl ProjectConfig {
         Ok(None)
     }
 
-    /// Validate profile names and overrides, and the selected profile.
+    /// Validate every setting before any analysis runs.
+    ///
+    /// Values that only make sense in a later command are still checked here,
+    /// so a bad policy, network, endpoint, or CI status fails at load time.
     fn validate(&self) -> Result<()> {
         self.audit.validate()?;
+        parse_compatibility_policy(&self.analysis.compatibility.policy)?;
+        if let Some(network) = &self.project.network {
+            let _ = network.parse::<Network>()?;
+        }
+        if let Some(endpoint) = &self.rpc.endpoint {
+            let _ = observatory_rpc::Endpoint::parse(endpoint)?;
+        }
+        self.ci.failure_statuses()?;
         for (name, profile) in &self.profiles {
             validate_profile_name(name)?;
             profile.validate()?;
@@ -412,12 +459,46 @@ mod tests {
 
     #[test]
     fn rejects_unknown_policy() {
-        let config = ProjectConfig::parse(
+        let error = ProjectConfig::parse(
             "analysis:\n  compatibility:\n    policy: wild\n",
             ConfigFormat::Yaml,
         )
+        .unwrap_err();
+        assert!(matches!(error, ObservatoryError::InvalidInput(_)));
+        assert!(error.to_string().contains("unknown compatibility policy"));
+    }
+
+    #[test]
+    fn rejects_invalid_network_endpoint_and_ci_status_before_analysis() {
+        for yaml in [
+            "project:\n  network: devnet\n",
+            "rpc:\n  endpoint: not-a-url\n",
+            "ci:\n  fail_on: MAYBE\n",
+            "ci:\n  fail_on: MATCH\n",
+        ] {
+            let error = ProjectConfig::parse(yaml, ConfigFormat::Yaml).unwrap_err();
+            assert!(matches!(error, ObservatoryError::InvalidInput(_)), "{yaml}");
+        }
+    }
+
+    #[test]
+    fn accepts_valid_network_endpoint_and_ci_status() {
+        let config = ProjectConfig::parse(
+            "project:\n  network: testnet\n\
+             rpc:\n  endpoint: https://soroban-testnet.stellar.org\n\
+             ci:\n  fail_on: MISMATCH, ERROR\n",
+            ConfigFormat::Yaml,
+        )
         .unwrap();
-        assert!(config.compatibility_policy().is_err());
+        assert_eq!(config.network(), Some("testnet"));
+        assert_eq!(
+            config.rpc_endpoint_for(None).unwrap(),
+            Some("https://soroban-testnet.stellar.org")
+        );
+        assert_eq!(
+            config.ci.failure_statuses().unwrap(),
+            ["ERROR", "MISMATCH"].map(str::to_string).into()
+        );
     }
 
     #[test]

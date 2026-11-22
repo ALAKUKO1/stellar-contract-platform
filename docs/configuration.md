@@ -122,8 +122,12 @@ window_secs = 60
 
 ## Validation
 
+Everything is validated while the file is parsed, before any command runs.
+
 - Unknown top-level or nested fields are errors.
 - An unknown `analysis.compatibility.policy` is an error.
+- `project.network` must be a known network (`public`, `testnet`, or `futurenet`).
+- `rpc.endpoint` must be a valid `https` endpoint (loopback `http` is allowed).
 - A profile key that is not a known network name is an error.
 - A profile `policy` other than `strict` or `lenient` is an error.
 - A profile `endpoint` must be a valid `https` endpoint (loopback `http` is allowed).
