@@ -306,6 +306,20 @@ mod tests {
                 }),
             ),
             (
+                "repro.dependencies",
+                serde_json::json!({
+                    "dependencies": [
+                        { "name": "soroban-sdk", "version": "22.0.0" }
+                    ],
+                    "comparison": {
+                        "state": "match",
+                        "compared_dependencies": 1,
+                        "differences": [],
+                        "detail": "dependency metadata matches the reference artifact",
+                    },
+                }),
+            ),
+            (
                 "doctor",
                 serde_json::json!({
                     "tool": TOOL_NAME,

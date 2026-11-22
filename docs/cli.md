@@ -97,6 +97,11 @@ states `source_reproduction: not_performed`; the tool never rebuilds from source
 and never claims source reproducibility. See
 [reproducibility.md](reproducibility.md).
 
+With `--dependencies`, reports `dep:<name>` entries from `contractmetav0` and,
+when a reference is supplied, a deterministic comparison of them. Missing
+dependency data is reported as `unavailable`, never as an empty list. See
+[reproducibility.md](reproducibility.md#dependency-metadata).
+
 ### `doctor`
 
 Prints capabilities, schema version, networks, and the RPC transport status.

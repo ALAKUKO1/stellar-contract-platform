@@ -84,6 +84,22 @@ the report cannot and does not claim source reproducibility.
 - `compared_keys` — the size of the union of keys,
 - `differences` — per-key `left`/`right` values (absent keys are `null`).
 
+## Dependency metadata
+
+`repro --dependencies [--reference <WASM>]` reports dependency entries recorded
+in `contractmetav0` under keys of the form `dep:<name>`. The value is the
+version string, kept verbatim; an empty value is reported as `null`.
+
+The `dep:` namespace is an Observatory convention, not an upstream Stellar
+standard. Keys outside it are never interpreted as dependencies; they remain in
+the raw `build_metadata` map and are reported verbatim by `repro`.
+
+When no `dep:` key is present, `dependencies` is `null` and the comparison
+state is `unavailable`. Absence is never reported as an empty dependency list.
+With `--reference`, the union of dependency names is compared; differences are
+sorted by name, so identical inputs always produce identical output. A
+comparison is `unavailable` unless both artifacts record dependency metadata.
+
 ## Concepts kept separate
 
 | Concept | Covered by |

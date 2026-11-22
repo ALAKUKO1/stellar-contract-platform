@@ -145,6 +145,9 @@ enum Command {
         /// Reference artifact to compare embedded metadata against.
         #[arg(long)]
         reference: Option<PathBuf>,
+        /// Report `dep:` dependency entries and compare them with `--reference`.
+        #[arg(long)]
+        dependencies: bool,
     },
     /// Run the REST API server or print its OpenAPI document.
     #[command(subcommand)]
@@ -681,17 +684,29 @@ fn run(cli: &Cli, format: OutputFormat) -> Result<ObservatoryExit> {
             emit(format, "verify.batch", &batch, || print_batch(&batch))?;
             Ok(verification_exit(batch.status(), &failures))
         }
-        Command::Repro { wasm, reference } => {
+        Command::Repro {
+            wasm,
+            reference,
+            dependencies,
+        } => {
             let bytes = observatory_wasm::load_file(wasm)?;
             let reference_bytes = reference
                 .as_ref()
                 .map(|path| observatory_wasm::load_file(path))
                 .transpose()?;
-            let report =
-                observatory_verify::reproducibility_report(&bytes, reference_bytes.as_deref())?;
-            emit(format, "repro", &report, || {
-                print_reproducibility(&report);
-            })?;
+            if *dependencies {
+                let report =
+                    observatory_verify::dependency_report(&bytes, reference_bytes.as_deref())?;
+                emit(format, "repro.dependencies", &report, || {
+                    print_dependencies(&report);
+                })?;
+            } else {
+                let report =
+                    observatory_verify::reproducibility_report(&bytes, reference_bytes.as_deref())?;
+                emit(format, "repro", &report, || {
+                    print_reproducibility(&report);
+                })?;
+            }
             Ok(ObservatoryExit::Success)
         }
         Command::Api(ApiCommand::Openapi) => {
@@ -1199,6 +1214,37 @@ fn print_interface_verification(result: &observatory_verify::InterfaceVerificati
     }
     if let Some(compatibility) = &result.compatibility {
         print_compat(compatibility);
+    }
+}
+
+fn print_dependencies(report: &observatory_verify::DependencyReport) {
+    match &report.dependencies {
+        Some(dependencies) => {
+            println!("dependencies:");
+            for dependency in dependencies {
+                println!(
+                    "  {} = {}",
+                    dependency.name,
+                    dependency.version.as_deref().unwrap_or("<unknown>")
+                );
+            }
+        }
+        None => println!("dependencies: <unavailable>"),
+    }
+    let state = match report.comparison.state {
+        observatory_verify::DependencyComparisonState::Unavailable => "unavailable",
+        observatory_verify::DependencyComparisonState::Match => "match",
+        observatory_verify::DependencyComparisonState::Mismatch => "mismatch",
+    };
+    println!("comparison: {state}");
+    println!("{}", report.comparison.detail);
+    for difference in &report.comparison.differences {
+        println!(
+            "  {}\n    left:  {}\n    right: {}",
+            difference.name,
+            difference.left.as_deref().unwrap_or("<none>"),
+            difference.right.as_deref().unwrap_or("<none>")
+        );
     }
 }
 

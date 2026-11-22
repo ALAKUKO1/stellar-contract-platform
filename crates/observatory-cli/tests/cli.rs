@@ -756,15 +756,47 @@ fn metadata_module() -> Vec<u8> {
         observatory_wasm::CONTRACT_ENV_META_SECTION,
         &env.to_xdr(Limits::none()).unwrap(),
     ));
-    let metadata = ScMetaEntry::ScMetaV0(ScMetaV0 {
-        key: "rsver".try_into().unwrap(),
-        val: "1.85.0".try_into().unwrap(),
-    });
+    let metadata = [
+        ScMetaEntry::ScMetaV0(ScMetaV0 {
+            key: "rsver".try_into().unwrap(),
+            val: "1.85.0".try_into().unwrap(),
+        }),
+        ScMetaEntry::ScMetaV0(ScMetaV0 {
+            key: "dep:serde".try_into().unwrap(),
+            val: "1.0.200".try_into().unwrap(),
+        }),
+    ];
+    let mut payload = Vec::new();
+    for entry in metadata {
+        payload.extend(entry.to_xdr(Limits::none()).unwrap());
+    }
     module.extend(observatory_testutil::custom_section(
         observatory_wasm::CONTRACT_META_SECTION,
-        &metadata.to_xdr(Limits::none()).unwrap(),
+        &payload,
     ));
     module
+}
+
+#[test]
+fn repro_reports_dependency_metadata_deterministically() {
+    let wasm = metadata_module();
+    let file = write_temp(&wasm, ".wasm");
+    let path = file.path().to_str().unwrap();
+    binary()
+        .args([
+            "repro",
+            path,
+            "--dependencies",
+            "--reference",
+            path,
+            "--json",
+        ])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("\"kind\": \"repro.dependencies\""))
+        .stdout(predicate::str::contains("\"name\": \"serde\""))
+        .stdout(predicate::str::contains("\"version\": \"1.0.200\""))
+        .stdout(predicate::str::contains("\"state\": \"match\""));
 }
 
 #[test]
