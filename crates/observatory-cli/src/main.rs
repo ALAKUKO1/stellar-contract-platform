@@ -293,6 +293,7 @@ enum ApiCommand {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, clap::ValueEnum)]
 enum FormatArg {
     /// Human-readable text.
+    #[value(alias = "human")]
     Text,
     /// Machine-readable JSON.
     Json,

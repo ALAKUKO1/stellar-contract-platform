@@ -6,7 +6,7 @@ use std::net::TcpListener;
 use std::thread;
 use std::time::Duration;
 
-use observatory_rpc::{Endpoint, HttpTransport, RpcClient, RpcErrorKind, Transport};
+use observatory_rpc::{Endpoint, HttpTransport, RpcClient, RpcErrorKind, RpcTimeouts, Transport};
 
 fn read_request(stream: &mut std::net::TcpStream) -> Vec<u8> {
     let mut buffer = Vec::new();
@@ -115,4 +115,51 @@ fn posts_json_rpc_to_the_mock_server_and_normalizes_errors() {
         "{request}"
     );
     assert!(request.contains("\"method\":\"getnetwork\""), "{request}");
+}
+
+#[test]
+fn timeouts_are_configurable_and_reject_zero() {
+    let endpoint = Endpoint::parse("http://127.0.0.1:1").expect("loopback endpoint");
+    let timeouts = RpcTimeouts::from_secs(2, 3).expect("valid timeouts");
+    let transport = HttpTransport::with_timeouts(endpoint, timeouts, 1024).expect("transport");
+    assert_eq!(transport.timeouts(), timeouts);
+
+    let endpoint = Endpoint::parse("http://127.0.0.1:1").expect("loopback endpoint");
+    let zero_connect = RpcTimeouts {
+        connect: Duration::ZERO,
+        read: Duration::from_secs(3),
+    };
+    assert!(HttpTransport::with_timeouts(endpoint.clone(), zero_connect, 1024).is_err());
+    assert!(HttpTransport::with_limits(endpoint, Duration::ZERO, 1024).is_err());
+}
+
+#[test]
+fn read_timeout_fails_a_slow_response() {
+    let listener = TcpListener::bind("127.0.0.1:0").expect("bind loopback");
+    let address = listener.local_addr().expect("local address");
+    let handle = thread::spawn(move || {
+        let (mut stream, _) = listener.accept().expect("accept connection");
+        let _ = read_request(&mut stream);
+        thread::sleep(Duration::from_millis(500));
+        let body = r#"{"jsonrpc":"2.0","id":1,"result":{"sequence":1}}"#;
+        let _ = write!(
+            stream,
+            "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{}",
+            body.len(),
+            body
+        );
+    });
+    let endpoint = Endpoint::parse(&format!("http://{address}")).expect("loopback endpoint");
+    let transport = HttpTransport::with_timeouts(
+        endpoint,
+        RpcTimeouts::new(Duration::from_secs(1), Duration::from_millis(200))
+            .expect("valid timeouts"),
+        1024,
+    )
+    .expect("transport");
+    let error = transport
+        .send(&serde_json::json!({ "jsonrpc": "2.0", "id": 1 }))
+        .expect_err("read must time out");
+    assert!(error.to_string().contains("timed out"), "{error}");
+    handle.join().expect("server joined");
 }

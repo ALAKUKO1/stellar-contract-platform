@@ -31,6 +31,19 @@ pub enum ErrorCode {
 }
 
 impl ErrorCode {
+    /// Every error code, for catalog and exhaustiveness checks.
+    pub const ALL: [ErrorCode; 9] = [
+        ErrorCode::InvalidInput,
+        ErrorCode::Io,
+        ErrorCode::Decode,
+        ErrorCode::Unsupported,
+        ErrorCode::Wasm,
+        ErrorCode::Spec,
+        ErrorCode::Rpc,
+        ErrorCode::Verification,
+        ErrorCode::Internal,
+    ];
+
     /// The stable string form used in JSON output.
     #[must_use]
     pub fn as_str(self) -> &'static str {

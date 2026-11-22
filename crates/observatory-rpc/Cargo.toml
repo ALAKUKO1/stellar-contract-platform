@@ -19,4 +19,6 @@ live = ["dep:ureq"]
 observatory-core.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+stellar-strkey.workspace = true
+stellar-xdr.workspace = true
 ureq = { workspace = true, optional = true }

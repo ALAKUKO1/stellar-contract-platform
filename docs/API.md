@@ -313,17 +313,43 @@ See [`rpc-errors.md`](rpc-errors.md) for the full taxonomy.
 | ------ | ------- |
 | 200 | success |
 | 201 | resource created (API key) |
+| 204 | no content (CORS preflight) |
 | 400 | invalid request or artifact |
 | 401 | authentication required or invalid |
 | 403 | authenticated but not permitted |
-| 404 | unknown route |
+| 404 | unknown route or resource |
 | 405 | method not allowed for a known route |
 | 413 | request body too large |
 | 415 | non-JSON content type |
-| 422 | unsupported feature |
+| 422 | unsupported feature or failed verification |
 | 429 | rate limited |
 | 500 | internal error |
 | 502 | upstream RPC error |
+| 503 | server at its connection limit |
+
+## Error catalog
+
+`GET /api/v1/errors` publishes every error code the API can emit. It requires no
+authentication and is generated from the same catalog that builds error
+responses, so a code's status cannot drift between the response and the
+catalog. Each entry has `code`, `status`, `description`, and `retryable`:
+
+```json
+{
+  "schema_version": "1.0",
+  "kind": "errors",
+  "data": {
+    "errors": [
+      { "code": "rate_limited", "status": 429, "description": "The caller exceeded its rate limit; retry after the reset window.", "retryable": true }
+    ]
+  }
+}
+```
+
+`retryable` means retrying the same request may succeed (for example after a
+rate-limit reset or an upstream RPC failure). Client errors such as
+`bad_request` are not retryable without changing the request. The catalog also
+appears in the OpenAPI document `GET /api/v1/errors` operation.
 
 ## OpenAPI synchronization
 

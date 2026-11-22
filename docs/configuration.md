@@ -38,6 +38,8 @@ analysis:
 
 rpc:
   endpoint: https://soroban-testnet.stellar.org
+  connect_timeout_secs: 10   # default: 10
+  read_timeout_secs: 30      # default: 30
 
 api:
   require_auth: true
@@ -108,6 +110,8 @@ window_secs = 60
 | `audit.enabled` | Rule allow-list for `inspect --security`; defaults to every non-experimental rule. |
 | `audit.severity` | Per-rule `WARN`/`ERROR` overrides for `inspect --security`. |
 | `rpc.endpoint` | Default endpoint for `deployment inspect` when neither `--rpc-url` nor a profile overrides it. Validated and recorded; live transport is future work. |
+| `rpc.connect_timeout_secs` | Connect timeout for RPC requests; defaults to 10 seconds. Zero is rejected. |
+| `rpc.read_timeout_secs` | Read timeout for RPC response headers and body; defaults to 30 seconds. Zero is rejected. |
 | `profiles.<network>.endpoint` | Endpoint override when that profile is selected. |
 | `profiles.<network>.policy` | Compatibility-policy override when that profile is selected. |
 | `profile` | Profile used when `--profile` is omitted. |
