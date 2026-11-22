@@ -6,6 +6,7 @@
 
 use std::collections::BTreeMap;
 
+use observatory_core::error::redact_secrets;
 use observatory_core::hash::sha256_hex;
 use observatory_core::{ObservatoryError, Result};
 use serde::Serialize;
@@ -145,9 +146,12 @@ impl ApiKeyStore {
         role: Role,
         label: &str,
     ) -> Result<ApiKeyRecord> {
+        let redacted = redact_secrets(plaintext.trim());
         let mut parts = plaintext.trim().splitn(3, '_');
         if parts.next() != Some(KEY_PREFIX) {
-            return Err(ObservatoryError::invalid("API key must start with `sco_`"));
+            return Err(ObservatoryError::invalid(format!(
+                "API key `{redacted}` must start with `sco_`"
+            )));
         }
         let id = parts
             .next()
@@ -312,5 +316,22 @@ mod tests {
         let json = serde_json::to_string(&record).unwrap();
         assert!(!json.contains(&record.hash));
         assert!(!json.contains("hash"));
+    }
+
+    #[test]
+    fn auth_errors_and_logs_never_echo_the_presented_key() {
+        let presented = "https://user:pass@example.org/rpc?api_key=SECRET";
+        let mut store = ApiKeyStore::new();
+        let rendered = store
+            .insert_plaintext(presented, Role::Viewer, "bad")
+            .unwrap_err()
+            .to_string();
+        for secret in ["user", "pass", "SECRET", presented] {
+            assert!(!rendered.contains(secret), "{rendered}");
+        }
+
+        let (plaintext, record) = store.generate(Role::Viewer, "ci").unwrap();
+        assert!(!format!("{record:?}").contains(&plaintext));
+        assert!(!format!("{:?}", store.authenticate(&plaintext)).contains(&plaintext));
     }
 }
