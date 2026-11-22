@@ -6,6 +6,9 @@ license.workspace = true
 authors.workspace = true
 repository.workspace = true
 description = "Stellar RPC transport abstraction, typed models, and deterministic mock transport."
+readme.workspace = true
+keywords.workspace = true
+categories.workspace = true
 
 [features]
 default = []

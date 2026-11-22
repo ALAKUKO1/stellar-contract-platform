@@ -6,6 +6,9 @@ license.workspace = true
 authors.workspace = true
 repository.workspace = true
 description = "Local-versus-deployed verification and reproducibility metadata analysis."
+readme.workspace = true
+keywords.workspace = true
+categories.workspace = true
 
 [dependencies]
 observatory-compat.workspace = true

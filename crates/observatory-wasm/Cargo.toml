@@ -6,6 +6,9 @@ license.workspace = true
 authors.workspace = true
 repository.workspace = true
 description = "Safe, bounded WASM inspection and artifact fingerprinting for Soroban contracts."
+readme.workspace = true
+keywords.workspace = true
+categories.workspace = true
 
 [dependencies]
 observatory-core.workspace = true

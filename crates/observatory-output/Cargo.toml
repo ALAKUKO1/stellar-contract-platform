@@ -6,6 +6,9 @@ license.workspace = true
 authors.workspace = true
 repository.workspace = true
 description = "Stable machine-readable and human-readable report rendering."
+readme.workspace = true
+keywords.workspace = true
+categories.workspace = true
 
 [dependencies]
 observatory-core.workspace = true

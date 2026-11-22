@@ -6,6 +6,9 @@ license.workspace = true
 authors.workspace = true
 repository.workspace = true
 description = "Typed Rust client for the Stellar Contract Observatory REST API."
+readme.workspace = true
+keywords.workspace = true
+categories.workspace = true
 
 [dependencies]
 observatory-core.workspace = true

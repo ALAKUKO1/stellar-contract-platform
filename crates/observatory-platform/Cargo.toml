@@ -6,6 +6,9 @@ license.workspace = true
 authors.workspace = true
 repository.workspace = true
 description = "Application/service layer, authentication, authorization, and rate limiting for the Observatory platform."
+readme.workspace = true
+keywords.workspace = true
+categories.workspace = true
 
 [dependencies]
 observatory-core.workspace = true

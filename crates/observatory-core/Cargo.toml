@@ -6,6 +6,9 @@ license.workspace = true
 authors.workspace = true
 repository.workspace = true
 description = "Shared types, errors, limits, and hashing for the Stellar Contract Observatory."
+readme.workspace = true
+keywords.workspace = true
+categories.workspace = true
 
 [dependencies]
 thiserror.workspace = true
