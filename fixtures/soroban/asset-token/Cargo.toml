@@ -1,0 +1,25 @@
+[package]
+name = "asset-token-fixture"
+version = "0.1.0"
+edition = "2021"
+license = "Apache-2.0"
+publish = false
+
+# Built outside the Observatory workspace: see ../../../README.md.
+[workspace]
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+soroban-sdk = "=21.7.7"
+
+[profile.release]
+opt-level = "z"
+overflow-checks = true
+debug = 0
+strip = "symbols"
+debug-assertions = false
+panic = "abort"
+codegen-units = 1
+lto = true
