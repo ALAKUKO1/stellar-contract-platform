@@ -93,6 +93,23 @@ others: set `PlatformConfig.route_limits["<exact path>"]` (or
 `api.route_limits` in the project file). The headers always report the effective
 limit for the request's route.
 
+## Idempotency
+
+Mutating requests (`POST`, `PUT`, `PATCH`, `DELETE`) may carry an
+`Idempotency-Key` header (1-255 bytes). The first successful (`2xx`) response is
+cached for 300 seconds and replayed for an identical request; a replay carries
+`Idempotency-Replayed: true`.
+
+- Reusing a key with a different method, path, query, or body returns `409` with
+  `code: "idempotency_conflict"`.
+- Keys are scoped to the caller (API-key id, or client IP when unauthenticated),
+  so two clients can use the same key independently.
+- Only successful responses are cached; a failed request can be retried with the
+  same key.
+- The cache holds at most 128 responses and evicts the oldest entry, so unique
+  keys cannot grow memory without bound.
+- Without the header, requests behave exactly as before and are never cached.
+
 ## Request IDs
 
 Every response carries `X-Request-Id`, a stable identifier for correlation.

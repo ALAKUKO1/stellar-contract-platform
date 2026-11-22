@@ -4,10 +4,12 @@
 //! and returns a [`Response`]. The HTTP adapter in `crate::http` is a thin
 //! wrapper, so the routing logic is fully unit-testable without sockets.
 
+use std::collections::BTreeMap;
 use std::str::FromStr;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::RwLock;
 
+use observatory_core::hash::sha256_hex;
 use observatory_core::{ObservatoryError, Result as CoreResult, SCHEMA_VERSION, TOOL_NAME};
 use observatory_output::report;
 use observatory_platform::{
@@ -67,6 +69,82 @@ pub const ROUTES: &[(&str, &str)] = &[
 
 /// Maximum number of events returned by one `/contracts/events` request.
 pub const MAX_EVENT_RESULTS: usize = 1000;
+
+/// How long an idempotent response is retained, in seconds.
+pub const IDEMPOTENCY_TTL_SECS: u64 = 300;
+
+/// Maximum number of cached idempotent responses.
+///
+/// The oldest entry is evicted when the bound is reached, so a burst of unique
+/// keys cannot grow memory without limit.
+pub const MAX_IDEMPOTENCY_ENTRIES: usize = 128;
+
+/// Maximum accepted `Idempotency-Key` length in bytes.
+const MAX_IDEMPOTENCY_KEY_BYTES: usize = 255;
+
+#[derive(Debug, Clone)]
+struct IdempotentResponse {
+    fingerprint: String,
+    response: Response,
+    stored_at: u64,
+}
+
+#[derive(Debug, Default)]
+struct IdempotencyCache {
+    entries: BTreeMap<String, IdempotentResponse>,
+}
+
+enum IdempotencyLookup {
+    Replay(Response),
+    Conflict,
+    Miss,
+}
+
+impl IdempotencyCache {
+    fn lookup(&mut self, scope: &str, fingerprint: &str, now_secs: u64) -> IdempotencyLookup {
+        match self.entries.get(scope) {
+            Some(entry) if now_secs.saturating_sub(entry.stored_at) >= IDEMPOTENCY_TTL_SECS => {
+                self.entries.remove(scope);
+                IdempotencyLookup::Miss
+            }
+            Some(entry) if entry.fingerprint == fingerprint => {
+                IdempotencyLookup::Replay(entry.response.clone())
+            }
+            Some(_) => IdempotencyLookup::Conflict,
+            None => IdempotencyLookup::Miss,
+        }
+    }
+
+    fn remember(&mut self, scope: String, fingerprint: String, response: &Response, now_secs: u64) {
+        self.entries
+            .retain(|_, entry| now_secs.saturating_sub(entry.stored_at) < IDEMPOTENCY_TTL_SECS);
+        while self.entries.len() >= MAX_IDEMPOTENCY_ENTRIES {
+            let oldest = self
+                .entries
+                .iter()
+                .min_by_key(|(_, entry)| entry.stored_at)
+                .map(|(scope, _)| scope.clone());
+            match oldest {
+                Some(scope) => {
+                    self.entries.remove(&scope);
+                }
+                None => break,
+            }
+        }
+        self.entries.insert(
+            scope,
+            IdempotentResponse {
+                fingerprint,
+                response: response.clone(),
+                stored_at: now_secs,
+            },
+        );
+    }
+}
+
+fn is_mutating(method: &str) -> bool {
+    matches!(method, "POST" | "PUT" | "PATCH" | "DELETE")
+}
 
 /// An API error with an HTTP status and a stable code.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -129,6 +207,7 @@ pub struct Api {
     config: PlatformConfig,
     counter: AtomicU64,
     metrics: Metrics,
+    idempotency: RwLock<IdempotencyCache>,
 }
 
 impl Api {
@@ -155,6 +234,7 @@ impl Api {
             config,
             counter: AtomicU64::new(0),
             metrics: Metrics::new(),
+            idempotency: RwLock::new(IdempotencyCache::default()),
         }
     }
 
@@ -285,6 +365,9 @@ impl Api {
         let limit = self.config.rate_limit_for(&request.path);
         let decision = self.limiter.check_with(limit, &route_key, now_secs);
         let actor = principal.as_ref().map(|principal| principal.key_id.clone());
+        let idempotency_owner = actor
+            .clone()
+            .unwrap_or_else(|| format!("client:{client_id}"));
 
         if !decision.allowed {
             self.record_audit(
@@ -302,7 +385,13 @@ impl Api {
         } else if request.method == "OPTIONS" {
             self.preflight(request)
         } else {
-            match self.route(request, principal.as_ref(), now_secs, &request_id) {
+            match self.dispatch(
+                request,
+                principal.as_ref(),
+                now_secs,
+                &request_id,
+                &idempotency_owner,
+            ) {
                 Ok(response) => response,
                 Err(error) => error_response(&error),
             }
@@ -363,6 +452,81 @@ impl Api {
         ));
         response.headers.extend(self.cors_headers(request));
         response
+    }
+
+    fn dispatch(
+        &self,
+        request: &Request,
+        principal: Option<&Principal>,
+        now_secs: u64,
+        request_id: &str,
+        owner: &str,
+    ) -> Result<Response, ApiError> {
+        let Some((scope, fingerprint)) = self.idempotency_scope(request, owner)? else {
+            return self.route(request, principal, now_secs, request_id);
+        };
+
+        let lookup = self
+            .idempotency
+            .write()
+            .expect("idempotency cache poisoned")
+            .lookup(&scope, &fingerprint, now_secs);
+        match lookup {
+            IdempotencyLookup::Replay(response) => {
+                Ok(response.with_header("Idempotency-Replayed", "true"))
+            }
+            IdempotencyLookup::Conflict => Err(ApiError::new(
+                "idempotency_conflict",
+                "Idempotency-Key was already used for a different request",
+            )),
+            IdempotencyLookup::Miss => {
+                let response = self.route(request, principal, now_secs, request_id)?;
+                // Only successful work is cached; a retry of a failure should
+                // be able to succeed once the cause is fixed.
+                if (200..300).contains(&response.status) {
+                    self.idempotency
+                        .write()
+                        .expect("idempotency cache poisoned")
+                        .remember(scope, fingerprint, &response, now_secs);
+                }
+                Ok(response)
+            }
+        }
+    }
+
+    fn idempotency_scope(
+        &self,
+        request: &Request,
+        owner: &str,
+    ) -> Result<Option<(String, String)>, ApiError> {
+        if !is_mutating(&request.method) {
+            return Ok(None);
+        }
+        let Some(raw) = request.header("idempotency-key") else {
+            return Ok(None);
+        };
+        let key = raw.trim();
+        if key.is_empty() {
+            return Err(ApiError::bad_request("Idempotency-Key must not be empty"));
+        }
+        if key.len() > MAX_IDEMPOTENCY_KEY_BYTES {
+            return Err(ApiError::bad_request(format!(
+                "Idempotency-Key must be at most {MAX_IDEMPOTENCY_KEY_BYTES} bytes"
+            )));
+        }
+
+        // The fingerprint covers everything that changes what the request does.
+        let mut material = Vec::new();
+        for part in [
+            request.method.as_str(),
+            request.path.as_str(),
+            request.query.as_deref().unwrap_or_default(),
+        ] {
+            material.extend_from_slice(part.as_bytes());
+            material.push(0);
+        }
+        material.extend_from_slice(&request.body);
+        Ok(Some((format!("{owner}:{key}"), sha256_hex(&material))))
     }
 
     fn preflight(&self, request: &Request) -> Response {
@@ -916,6 +1080,143 @@ mod tests {
             .headers
             .insert("authorization".to_string(), format!("Bearer {key}"));
         request
+    }
+
+    fn with_idempotency_key(mut request: Request, key: &str) -> Request {
+        request
+            .headers
+            .insert("idempotency-key".to_string(), key.to_string());
+        request
+    }
+
+    fn replay_header(response: &Response) -> bool {
+        response
+            .headers
+            .iter()
+            .any(|(name, value)| name == "Idempotency-Replayed" && value == "true")
+    }
+
+    #[test]
+    fn idempotent_post_replays_the_prior_result() {
+        let (api, key) = api_with_developer();
+        let body = serde_json::json!({ "kind": "analysis" });
+        let request = with_idempotency_key(with_key(post("/api/v1/jobs", body), &key), "job-1");
+
+        let first = api.handle(&request, "ip", 1);
+        assert_eq!(first.status, 201);
+        assert!(!replay_header(&first));
+        let first_id = created_id(&first);
+
+        let replay = api.handle(&request, "ip", 2);
+        assert_eq!(replay.status, 201);
+        assert!(replay_header(&replay));
+        assert_eq!(created_id(&replay), first_id);
+    }
+
+    #[test]
+    fn idempotent_post_rejects_a_conflicting_reuse() {
+        let (api, key) = api_with_developer();
+        let first = with_idempotency_key(
+            with_key(
+                post("/api/v1/jobs", serde_json::json!({ "kind": "analysis" })),
+                &key,
+            ),
+            "same-key",
+        );
+        assert_eq!(api.handle(&first, "ip", 1).status, 201);
+
+        let conflict = with_idempotency_key(
+            with_key(
+                post("/api/v1/jobs", serde_json::json!({ "kind": "other" })),
+                &key,
+            ),
+            "same-key",
+        );
+        let response = api.handle(&conflict, "ip", 2);
+        assert_eq!(response.status, 409);
+        let body: Value = serde_json::from_slice(&response.body).unwrap();
+        assert_eq!(body["code"], "idempotency_conflict");
+    }
+
+    #[test]
+    fn idempotency_cache_is_bounded_and_expires() {
+        let config = PlatformConfig {
+            rate_limit: observatory_platform::RateLimitConfig {
+                limit: 1000,
+                window_secs: 60,
+            },
+            ..PlatformConfig::default()
+        };
+        let api = Api::new(config);
+        let key = api.generate_key(Role::Developer, "test").unwrap();
+
+        let mut first_id = String::new();
+        for index in 0..=MAX_IDEMPOTENCY_ENTRIES {
+            let request = with_idempotency_key(
+                with_key(
+                    post(
+                        "/api/v1/jobs",
+                        serde_json::json!({ "kind": format!("job-{index}") }),
+                    ),
+                    &key,
+                ),
+                &format!("key-{index}"),
+            );
+            let response = api.handle(&request, "ip", 0);
+            assert_eq!(response.status, 201);
+            if index == 0 {
+                first_id = created_id(&response);
+            }
+        }
+
+        // The first entry was evicted to make room for the newest one.
+        let evicted = with_idempotency_key(
+            with_key(
+                post("/api/v1/jobs", serde_json::json!({ "kind": "job-0" })),
+                &key,
+            ),
+            "key-0",
+        );
+        let response = api.handle(&evicted, "ip", 0);
+        assert_eq!(response.status, 201);
+        assert!(!replay_header(&response), "the oldest entry was evicted");
+        assert_ne!(created_id(&response), first_id);
+
+        // The newest entry replays within the window and expires after it.
+        let newest = with_idempotency_key(
+            with_key(
+                post(
+                    "/api/v1/jobs",
+                    serde_json::json!({ "kind": format!("job-{MAX_IDEMPOTENCY_ENTRIES}") }),
+                ),
+                &key,
+            ),
+            &format!("key-{MAX_IDEMPOTENCY_ENTRIES}"),
+        );
+        assert!(replay_header(&api.handle(&newest, "ip", 10)));
+        let expired = api.handle(&newest, "ip", 10 + IDEMPOTENCY_TTL_SECS);
+        assert_eq!(expired.status, 201);
+        assert!(!replay_header(&expired));
+    }
+
+    #[test]
+    fn posts_without_a_key_are_not_cached_and_empty_keys_are_rejected() {
+        let (api, key) = api_with_developer();
+        let body = serde_json::json!({ "kind": "analysis" });
+        let first = api.handle(&with_key(post("/api/v1/jobs", body.clone()), &key), "ip", 1);
+        let second = api.handle(&with_key(post("/api/v1/jobs", body), &key), "ip", 2);
+        assert_eq!(first.status, 201);
+        assert_eq!(second.status, 201);
+        assert_ne!(created_id(&first), created_id(&second));
+
+        let empty = with_idempotency_key(
+            with_key(
+                post("/api/v1/jobs", serde_json::json!({ "kind": "analysis" })),
+                &key,
+            ),
+            "   ",
+        );
+        assert_eq!(api.handle(&empty, "ip", 3).status, 400);
     }
 
     #[test]
