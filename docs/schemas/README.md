@@ -14,6 +14,14 @@ changes, and `crates/observatory-output` tests assert both stay in sync.
 `error.schema.json` describes error reports, which use `code` and `message`
 instead of `data`.
 
+## Canonical interface
+
+`interface.schema.json` describes the canonical `ContractInterface` document
+produced by `observatory_interface::ContractInterface::canonical_json()`. Its
+`schema_version` const is `observatory_interface::INTERFACE_SCHEMA_VERSION`; the
+tests in `crates/observatory-interface` assert the two stay in sync and reject a
+mismatched version.
+
 ## Validation
 
 The tests in `crates/observatory-output/src/lib.rs` validate a representative

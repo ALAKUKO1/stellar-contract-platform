@@ -329,6 +329,9 @@ mod tests {
             .expect("read docs/schemas")
             .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
             .filter_map(|name| name.strip_suffix(".schema.json").map(str::to_string))
+            // The canonical interface document has its own schema and is not a
+            // report envelope; observatory-interface tests validate it.
+            .filter(|kind| kind != "interface")
             .collect();
         kinds.sort_unstable();
 

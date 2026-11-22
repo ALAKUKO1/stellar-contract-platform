@@ -1225,6 +1225,7 @@ dependencies = [
 name = "observatory-interface"
 version = "0.1.0"
 dependencies = [
+ "jsonschema",
  "observatory-core",
  "observatory-spec",
  "observatory-testutil",

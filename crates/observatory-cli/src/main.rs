@@ -769,33 +769,7 @@ fn resolve_network(
 fn verification_failure_policy(
     project: &observatory_platform::ProjectConfig,
 ) -> Result<BTreeSet<String>> {
-    let Some(fail_on) = &project.ci.fail_on else {
-        return Ok(["MISMATCH", "INSUFFICIENT_DATA", "ERROR"]
-            .into_iter()
-            .map(str::to_string)
-            .collect());
-    };
-    let mut statuses = BTreeSet::new();
-    for status in fail_on.split(',') {
-        let status = status.trim().to_ascii_uppercase();
-        match status.as_str() {
-            "MISMATCH" | "INSUFFICIENT_DATA" | "ERROR" => {
-                statuses.insert(status);
-            }
-            "MATCH" => {
-                return Err(ObservatoryError::invalid(
-                    "ci.fail_on cannot include MATCH; a match never fails the build",
-                ))
-            }
-            other => {
-                return Err(ObservatoryError::invalid(format!(
-                    "unknown verification status `{other}` in ci.fail_on; \
-                     expected MISMATCH, INSUFFICIENT_DATA, or ERROR"
-                )))
-            }
-        }
-    }
-    Ok(statuses)
+    project.ci.failure_statuses()
 }
 
 fn verification_exit(status: VerificationStatus, failures: &BTreeSet<String>) -> ObservatoryExit {

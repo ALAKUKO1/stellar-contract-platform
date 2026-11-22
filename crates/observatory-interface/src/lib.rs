@@ -699,6 +699,48 @@ mod tests {
     }
 
     #[test]
+    fn canonical_interfaces_validate_against_the_published_schema() {
+        let path = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../docs/schemas/interface.schema.json"
+        );
+        let schema: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(path).expect("read interface schema"))
+                .expect("parse interface schema");
+        assert_eq!(
+            schema["properties"]["schema_version"]["const"], INTERFACE_SCHEMA_VERSION,
+            "docs/schemas/interface.schema.json is out of sync with INTERFACE_SCHEMA_VERSION"
+        );
+
+        let validator = jsonschema::validator_for(&schema).expect("compiled schema");
+        for (name, interface) in known_vectors() {
+            let value = serde_json::from_slice::<serde_json::Value>(
+                &interface.canonical_json().expect("canonical JSON"),
+            )
+            .expect("parse canonical JSON");
+            if let Err(error) = validator.validate(&value) {
+                panic!("`{name}` does not validate against interface.schema.json: {error}");
+            }
+        }
+    }
+
+    #[test]
+    fn a_mismatched_schema_version_fails_validation() {
+        let path = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../docs/schemas/interface.schema.json"
+        );
+        let schema: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(path).expect("read interface schema"))
+                .expect("parse interface schema");
+        let validator = jsonschema::validator_for(&schema).expect("compiled schema");
+
+        let mut value = serde_json::to_value(&known_vectors()[0].1).expect("serialize");
+        value["schema_version"] = serde_json::json!("999");
+        assert!(!validator.is_valid(&value));
+    }
+
+    #[test]
     fn known_fingerprint_vectors_are_stable() {
         // Each vector pins the canonical JSON serialization *format*, not
         // interface semantics. A serialization change that alters the bytes for

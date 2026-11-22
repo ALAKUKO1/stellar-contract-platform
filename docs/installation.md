@@ -60,4 +60,5 @@ runs the test suite on all three.
 Prebuilt binaries are published on the Releases page. Crates are not published
 to crates.io yet, so `cargo install observatory-cli` does not work; use
 `cargo install --git` above until a crates.io release exists. The project is
-pre-1.0.
+pre-1.0. CI dry-runs packaging for crates whose dependencies resolve; see
+[release.md](release.md) for the current state and publication order.

@@ -28,6 +28,9 @@ authors = ["StellarFoundry"]
 repository = "https://github.com/AyinkxLab/stellar-contract-platform"
 homepage = "https://github.com/AyinkxLab/stellar-contract-platform"
 description = "Contract intelligence, inspection, interface analysis, compatibility, deployment verification, and reproducibility tooling for Stellar and Soroban contracts."
+readme = "README.md"
+keywords = ["stellar", "soroban", "smart-contracts", "wasm", "blockchain"]
+categories = ["development-tools", "cryptography::cryptocurrencies", "wasm"]
 rust-version = "1.88"
 
 [workspace.dependencies]
