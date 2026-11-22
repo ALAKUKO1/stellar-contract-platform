@@ -784,12 +784,35 @@ mod tests {
     use super::*;
     use observatory_spec::normalize;
     use observatory_testutil::spec::{
-        spec_enum, spec_error_enum, spec_event, spec_function, spec_struct, spec_union,
+        spec_enum, spec_error_enum, spec_event, spec_function, spec_function_with_doc, spec_struct,
+        spec_union,
     };
     use stellar_xdr::{ScSpecEntry, ScSpecEventParamLocationV0, ScSpecTypeDef};
 
     fn interface(entries: Vec<ScSpecEntry>) -> ContractInterface {
         ContractInterface::from_spec(normalize(entries))
+    }
+
+    /// Assert that diffing `old` against `new` yields exactly one change with the
+    /// expected kind, severity, and path.
+    fn assert_single_change(
+        old: Vec<ScSpecEntry>,
+        new: Vec<ScSpecEntry>,
+        kind: ChangeKind,
+        severity: Severity,
+        path: &str,
+    ) {
+        let result = diff(&interface(old), &interface(new));
+        assert_eq!(
+            result.changes.len(),
+            1,
+            "expected exactly one change, got {:?}",
+            result.changes
+        );
+        let change = &result.changes[0];
+        assert_eq!(change.kind, kind);
+        assert_eq!(change.severity, severity);
+        assert_eq!(change.path, path);
     }
 
     #[test]
@@ -1274,5 +1297,181 @@ mod tests {
         assert!(markdown.contains("## Breaking"));
         assert!(markdown.contains("`function::b`"));
         assert_eq!(markdown, render_markdown(&result));
+    }
+
+    #[test]
+    fn change_kind_function_added() {
+        assert_single_change(
+            vec![],
+            vec![spec_function("added", &[("x", ScSpecTypeDef::U32)], None)],
+            ChangeKind::FunctionAdded,
+            Severity::NonBreaking,
+            "function::added",
+        );
+    }
+
+    #[test]
+    fn change_kind_function_removed() {
+        assert_single_change(
+            vec![spec_function("removed", &[("x", ScSpecTypeDef::U32)], None)],
+            vec![],
+            ChangeKind::FunctionRemoved,
+            Severity::Breaking,
+            "function::removed",
+        );
+    }
+
+    #[test]
+    fn change_kind_function_changed() {
+        assert_single_change(
+            vec![spec_function("changed", &[("x", ScSpecTypeDef::U32)], None)],
+            vec![spec_function("changed", &[("x", ScSpecTypeDef::U64)], None)],
+            ChangeKind::FunctionChanged,
+            Severity::Breaking,
+            "function::changed",
+        );
+    }
+
+    #[test]
+    fn change_kind_function_renamed() {
+        assert_single_change(
+            vec![spec_function(
+                "old_fn",
+                &[("to", ScSpecTypeDef::Address)],
+                Some(ScSpecTypeDef::Bool),
+            )],
+            vec![spec_function(
+                "new_fn",
+                &[("to", ScSpecTypeDef::Address)],
+                Some(ScSpecTypeDef::Bool),
+            )],
+            ChangeKind::FunctionRenamed,
+            Severity::Breaking,
+            "function::old_fn",
+        );
+    }
+
+    #[test]
+    fn change_kind_type_added() {
+        assert_single_change(
+            vec![],
+            vec![spec_struct("Added", &[("a", ScSpecTypeDef::U32)])],
+            ChangeKind::TypeAdded,
+            Severity::NonBreaking,
+            "type::Added",
+        );
+    }
+
+    #[test]
+    fn change_kind_type_removed() {
+        assert_single_change(
+            vec![spec_struct("Removed", &[("a", ScSpecTypeDef::U32)])],
+            vec![],
+            ChangeKind::TypeRemoved,
+            Severity::Breaking,
+            "type::Removed",
+        );
+    }
+
+    #[test]
+    fn change_kind_type_changed() {
+        assert_single_change(
+            vec![spec_struct("Changed", &[("a", ScSpecTypeDef::U32)])],
+            vec![spec_struct("Changed", &[("a", ScSpecTypeDef::U64)])],
+            ChangeKind::TypeChanged,
+            Severity::Breaking,
+            "type::Changed",
+        );
+    }
+
+    #[test]
+    fn change_kind_type_renamed() {
+        assert_single_change(
+            vec![spec_struct("OldName", &[("a", ScSpecTypeDef::U32)])],
+            vec![spec_struct("NewName", &[("a", ScSpecTypeDef::U32)])],
+            ChangeKind::TypeRenamed,
+            Severity::Breaking,
+            "type::OldName",
+        );
+    }
+
+    #[test]
+    fn change_kind_event_added() {
+        assert_single_change(
+            vec![],
+            vec![spec_event("added", &["added"], &[])],
+            ChangeKind::EventAdded,
+            Severity::NonBreaking,
+            "event::added",
+        );
+    }
+
+    #[test]
+    fn change_kind_event_removed() {
+        assert_single_change(
+            vec![spec_event("removed", &["removed"], &[])],
+            vec![],
+            ChangeKind::EventRemoved,
+            Severity::Breaking,
+            "event::removed",
+        );
+    }
+
+    #[test]
+    fn change_kind_event_changed() {
+        assert_single_change(
+            vec![spec_event("changed", &["one"], &[])],
+            vec![spec_event("changed", &["two"], &[])],
+            ChangeKind::EventChanged,
+            Severity::Breaking,
+            "event::changed",
+        );
+    }
+
+    #[test]
+    fn change_kind_event_renamed() {
+        assert_single_change(
+            vec![spec_event(
+                "old_event",
+                &["transfer", "v1"],
+                &[(
+                    "amount",
+                    ScSpecTypeDef::I128,
+                    ScSpecEventParamLocationV0::Data,
+                )],
+            )],
+            vec![spec_event(
+                "new_event",
+                &["transfer", "v1"],
+                &[(
+                    "amount",
+                    ScSpecTypeDef::I128,
+                    ScSpecEventParamLocationV0::Data,
+                )],
+            )],
+            ChangeKind::EventRenamed,
+            Severity::Breaking,
+            "event::old_event",
+        );
+    }
+
+    #[test]
+    fn change_kind_function_documentation_is_informational() {
+        assert_single_change(
+            vec![spec_function(
+                "documented",
+                &[("x", ScSpecTypeDef::U32)],
+                None,
+            )],
+            vec![spec_function_with_doc(
+                "documented",
+                "docs",
+                &[("x", ScSpecTypeDef::U32)],
+                None,
+            )],
+            ChangeKind::FunctionChanged,
+            Severity::Informational,
+            "function::documented",
+        );
     }
 }

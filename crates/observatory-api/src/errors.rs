@@ -113,6 +113,12 @@ pub const ERROR_CATALOG: &[ErrorCatalogEntry] = &[
         retryable: false,
     },
     ErrorCatalogEntry {
+        code: "not_acceptable",
+        status: 406,
+        description: "The Accept header does not allow a supported response media type.",
+        retryable: false,
+    },
+    ErrorCatalogEntry {
         code: "rate_limited",
         status: 429,
         description: "The caller exceeded its rate limit; retry after the reset window.",
