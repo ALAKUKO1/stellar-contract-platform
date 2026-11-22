@@ -305,6 +305,7 @@ fn reason_phrase(status: u16) -> &'static str {
         403 => "Forbidden",
         404 => "Not Found",
         405 => "Method Not Allowed",
+        406 => "Not Acceptable",
         413 => "Payload Too Large",
         415 => "Unsupported Media Type",
         422 => "Unprocessable Entity",

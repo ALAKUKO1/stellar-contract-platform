@@ -384,6 +384,11 @@ impl Api {
             error_response(&ApiError::new("rate_limited", "rate limit exceeded"))
         } else if request.method == "OPTIONS" {
             self.preflight(request)
+        } else if !accepts(request) {
+            error_response(&ApiError::new(
+                "not_acceptable",
+                "Accept must allow a supported response media type",
+            ))
         } else {
             match self.dispatch(
                 request,
@@ -1006,6 +1011,33 @@ fn wants_json(request: &Request) -> bool {
         query
             .split('&')
             .any(|pair| pair.eq_ignore_ascii_case("format=json"))
+    })
+}
+
+/// Whether the request's `Accept` header permits a response.
+///
+/// A missing or empty header, a wildcard, or an explicit `application/json`
+/// (or `application/*`) is accepted. The metrics endpoint can also serve
+/// Prometheus text. Any explicit unsupported media type is rejected.
+fn accepts(request: &Request) -> bool {
+    let Some(header) = request.header("accept") else {
+        return true;
+    };
+    if header.trim().is_empty() {
+        return true;
+    }
+    header.split(',').any(|range| {
+        let media = range
+            .split(';')
+            .next()
+            .unwrap_or_default()
+            .trim()
+            .to_ascii_lowercase();
+        match media.as_str() {
+            "*/*" | "application/*" | "application/json" => true,
+            "text/*" | "text/plain" => request.path == METRICS_PATH,
+            _ => false,
+        }
     })
 }
 
@@ -2050,5 +2082,65 @@ mod tests {
             .headers
             .iter()
             .any(|(name, value)| name == "X-RateLimit-Limit" && value == "10"));
+    }
+
+    fn with_accept(mut request: Request, accept: &str) -> Request {
+        request
+            .headers
+            .insert("accept".to_string(), accept.to_string());
+        request
+    }
+
+    #[test]
+    fn accept_json_is_honored() {
+        let api = Api::new(PlatformConfig::default());
+        let response = api.handle(
+            &with_accept(get("/api/v1/health"), "application/json"),
+            "ip",
+            0,
+        );
+        assert_eq!(response.status, 200);
+        assert_eq!(
+            header_value(&response, "Content-Type"),
+            Some("application/json")
+        );
+    }
+
+    #[test]
+    fn missing_or_empty_accept_defaults_to_json() {
+        let api = Api::new(PlatformConfig::default());
+        assert_eq!(api.handle(&get("/api/v1/health"), "ip", 0).status, 200);
+
+        let empty = api.handle(&with_accept(get("/api/v1/health"), ""), "ip", 0);
+        assert_eq!(empty.status, 200);
+        assert_eq!(
+            header_value(&empty, "Content-Type"),
+            Some("application/json")
+        );
+    }
+
+    #[test]
+    fn unsupported_accept_returns_406_with_the_error_envelope() {
+        let api = Api::new(PlatformConfig::default());
+        for accept in ["text/html", "application/xml"] {
+            let response = api.handle(&with_accept(get("/api/v1/health"), accept), "ip", 0);
+            assert_eq!(response.status, 406, "Accept: {accept}");
+            assert_eq!(
+                header_value(&response, "Content-Type"),
+                Some("application/json")
+            );
+            let body: Value = serde_json::from_slice(&response.body).unwrap();
+            assert_eq!(body["kind"], "error");
+            assert_eq!(body["code"], "not_acceptable");
+        }
+    }
+
+    #[test]
+    fn wildcard_accept_is_accepted() {
+        let api = Api::new(PlatformConfig::default());
+        for accept in ["*/*", "application/*"] {
+            let response = api.handle(&with_accept(get("/api/v1/health"), accept), "ip", 0);
+            assert_eq!(response.status, 200, "Accept: {accept}");
+        }
     }
 }
