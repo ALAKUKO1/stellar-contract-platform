@@ -193,7 +193,14 @@ pub fn parse_rpc_event(value: &Value) -> Result<EventRecord> {
         .or_else(|| object.get("data"))
         .ok_or_else(|| ObservatoryError::decode("RPC event is missing a value"))?;
     let data = decode_rpc_scval(data)?;
-    record_from_parts(contract_id, ledger, tx_hash, event_type, &decoded_topics, &data)
+    record_from_parts(
+        contract_id,
+        ledger,
+        tx_hash,
+        event_type,
+        &decoded_topics,
+        &data,
+    )
 }
 
 /// Parse every event in a `getEvents` result object.

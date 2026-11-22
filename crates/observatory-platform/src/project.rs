@@ -584,11 +584,8 @@ mod tests {
             observatory_rpc::DEFAULT_MAX_RESPONSE_BYTES
         );
 
-        let config = ProjectConfig::parse(
-            "rpc:\n  max_response_bytes: 4096\n",
-            ConfigFormat::Yaml,
-        )
-        .unwrap();
+        let config =
+            ProjectConfig::parse("rpc:\n  max_response_bytes: 4096\n", ConfigFormat::Yaml).unwrap();
         assert_eq!(config.rpc_max_response_bytes().unwrap(), 4096);
 
         let error = ProjectConfig::parse("rpc:\n  max_response_bytes: 0\n", ConfigFormat::Yaml)
