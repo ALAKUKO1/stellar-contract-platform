@@ -1,0 +1,227 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/Tech-Cred/stellar-contract-platform/blob/main/docs/schemas/interface.schema.json",
+  "title": "canonical contract interface",
+  "description": "The canonical, order-independent ContractInterface document. The schema_version const tracks observatory_interface::INTERFACE_SCHEMA_VERSION.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "functions",
+    "structs",
+    "unions",
+    "enums",
+    "error_enums",
+    "events"
+  ],
+  "properties": {
+    "schema_version": { "const": "1.0" },
+    "functions": { "type": "array", "items": { "$ref": "#/$defs/function" } },
+    "structs": { "type": "array", "items": { "$ref": "#/$defs/struct" } },
+    "unions": { "type": "array", "items": { "$ref": "#/$defs/union" } },
+    "enums": { "type": "array", "items": { "$ref": "#/$defs/enum" } },
+    "error_enums": { "type": "array", "items": { "$ref": "#/$defs/error_enum" } },
+    "events": { "type": "array", "items": { "$ref": "#/$defs/event" } }
+  },
+  "$defs": {
+    "type": {
+      "oneOf": [
+        { "enum": [
+          "val", "bool", "void", "error", "u32", "i32", "u64", "i64",
+          "timepoint", "duration", "u128", "i128", "u256", "i256",
+          "bytes", "string", "symbol", "address", "muxed_address"
+        ] },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["option"],
+          "properties": { "option": { "$ref": "#/$defs/type" } }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["vec"],
+          "properties": { "vec": { "$ref": "#/$defs/type" } }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["result"],
+          "properties": {
+            "result": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["ok", "error"],
+              "properties": {
+                "ok": { "$ref": "#/$defs/type" },
+                "error": { "$ref": "#/$defs/type" }
+              }
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["map"],
+          "properties": {
+            "map": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["key", "value"],
+              "properties": {
+                "key": { "$ref": "#/$defs/type" },
+                "value": { "$ref": "#/$defs/type" }
+              }
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["tuple"],
+          "properties": {
+            "tuple": { "type": "array", "items": { "$ref": "#/$defs/type" } }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["bytes_n"],
+          "properties": {
+            "bytes_n": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["bytes"],
+              "properties": { "bytes": { "type": "integer", "minimum": 0 } }
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["udt"],
+          "properties": {
+            "udt": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["name"],
+              "properties": { "name": { "type": "string" } }
+            }
+          }
+        }
+      ]
+    },
+    "param": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "doc", "ty"],
+      "properties": {
+        "name": { "type": "string" },
+        "doc": { "type": "string" },
+        "ty": { "$ref": "#/$defs/type" }
+      }
+    },
+    "function": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "doc", "inputs", "outputs"],
+      "properties": {
+        "name": { "type": "string" },
+        "doc": { "type": "string" },
+        "inputs": { "type": "array", "items": { "$ref": "#/$defs/param" } },
+        "outputs": { "type": "array", "items": { "$ref": "#/$defs/type" } }
+      }
+    },
+    "field": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "doc", "ty"],
+      "properties": {
+        "name": { "type": "string" },
+        "doc": { "type": "string" },
+        "ty": { "$ref": "#/$defs/type" }
+      }
+    },
+    "struct": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "doc", "fields"],
+      "properties": {
+        "name": { "type": "string" },
+        "doc": { "type": "string" },
+        "fields": { "type": "array", "items": { "$ref": "#/$defs/field" } }
+      }
+    },
+    "union_case": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "doc", "types"],
+      "properties": {
+        "name": { "type": "string" },
+        "doc": { "type": "string" },
+        "types": { "type": "array", "items": { "$ref": "#/$defs/type" } }
+      }
+    },
+    "union": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "doc", "cases"],
+      "properties": {
+        "name": { "type": "string" },
+        "doc": { "type": "string" },
+        "cases": { "type": "array", "items": { "$ref": "#/$defs/union_case" } }
+      }
+    },
+    "enum_case": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "value"],
+      "properties": {
+        "name": { "type": "string" },
+        "value": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "enum": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "doc", "cases"],
+      "properties": {
+        "name": { "type": "string" },
+        "doc": { "type": "string" },
+        "cases": { "type": "array", "items": { "$ref": "#/$defs/enum_case" } }
+      }
+    },
+    "error_enum": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "doc", "cases"],
+      "properties": {
+        "name": { "type": "string" },
+        "doc": { "type": "string" },
+        "cases": { "type": "array", "items": { "$ref": "#/$defs/enum_case" } }
+      }
+    },
+    "event_param": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "ty", "location"],
+      "properties": {
+        "name": { "type": "string" },
+        "ty": { "$ref": "#/$defs/type" },
+        "location": { "enum": ["data", "topic_list"] }
+      }
+    },
+    "event": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "doc", "prefix_topics", "params", "data_format"],
+      "properties": {
+        "name": { "type": "string" },
+        "doc": { "type": "string" },
+        "prefix_topics": { "type": "array", "items": { "type": "string" } },
+        "params": { "type": "array", "items": { "$ref": "#/$defs/event_param" } },
+        "data_format": { "enum": ["single_value", "vec", "map"] }
+      }
+    }
+  }
+}
