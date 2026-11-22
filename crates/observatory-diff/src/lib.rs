@@ -782,8 +782,8 @@ mod tests {
     use super::*;
     use observatory_spec::normalize;
     use observatory_testutil::spec::{
-        spec_enum, spec_error_enum, spec_event, spec_function, spec_function_with_doc,
-        spec_struct, spec_union,
+        spec_enum, spec_error_enum, spec_event, spec_function, spec_function_with_doc, spec_struct,
+        spec_union,
     };
     use stellar_xdr::{ScSpecEntry, ScSpecEventParamLocationV0, ScSpecTypeDef};
 
