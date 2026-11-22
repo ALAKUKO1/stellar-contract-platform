@@ -29,7 +29,7 @@ pub use observatory_compat::CompatibilityPolicy;
 pub use policy::{load_policy, parse_policy};
 pub use project::{ConfigFormat, ProjectConfig};
 pub use ratelimit::{RateLimitConfig, RateLimitDecision, RateLimiter};
-pub use rbac::{authorize, Permission, Role};
+pub use rbac::{authorize, authorize_with_scopes, validate_scopes, Permission, Role};
 pub use service::Observatory;
 pub use store::FileKeyStore;
 pub use webhook::{

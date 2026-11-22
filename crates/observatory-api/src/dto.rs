@@ -105,6 +105,9 @@ pub struct CancelJobRequest {
 pub struct CreateKeyRequest {
     /// Role to grant: `viewer`, `developer`, `maintainer`, or `admin`.
     pub role: String,
+    /// Optional subset of the role's permissions to grant.
+    #[serde(default)]
+    pub scopes: Option<Vec<String>>,
     /// Human-readable label.
     pub label: String,
 }

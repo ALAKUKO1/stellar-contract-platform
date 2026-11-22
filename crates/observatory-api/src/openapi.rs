@@ -152,7 +152,20 @@ pub fn document() -> Value {
                             "type": "string",
                             "enum": ["viewer", "developer", "maintainer", "admin"]
                         },
-                        "label": { "type": "string", "minLength": 1 }
+                        "label": { "type": "string", "minLength": 1 },
+                        "scopes": {
+                            "type": "array",
+                            "items": {
+                                "type": "string",
+                                "enum": [
+                                    "read_health",
+                                    "read_version",
+                                    "run_analysis",
+                                    "manage_webhooks",
+                                    "manage_keys"
+                                ]
+                            }
+                        }
                     }
                 },
                 "CreateWebhookRequest": {
