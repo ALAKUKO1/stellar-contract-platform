@@ -93,6 +93,8 @@ Early but practical. The project focuses on contract intelligence, compatibility
 
 - [Why Observatory](docs/WHY_OBSERVATORY.md)
 - [Architecture](docs/architecture.md)
+- [Interface schema versioning](docs/interface-schema-versioning.md)
+- [Interface diff](docs/interface-diff.md)
 - [Architecture decision records](docs/adr/README.md)
 - [Glossary](docs/glossary.md)
 - [Getting started](docs/getting-started.md)

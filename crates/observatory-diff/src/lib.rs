@@ -16,10 +16,12 @@
 //! | Function documentation only | informational |
 //! | Type added | non-breaking |
 //! | Type removed | breaking |
+//! | Type renamed (identical shape) | breaking |
 //! | Type definition changed | breaking |
 //! | Type documentation only | informational |
 //! | Event added | non-breaking |
 //! | Event removed | breaking |
+//! | Event renamed (identical shape) | breaking |
 //! | Event definition changed | breaking |
 
 use observatory_interface::ContractInterface;
@@ -55,12 +57,17 @@ pub enum ChangeKind {
     TypeAdded,
     /// A type was removed.
     TypeRemoved,
+    /// A type was renamed (a removal and an addition with an identical shape).
+    TypeRenamed,
     /// A type changed.
     TypeChanged,
     /// An event was added.
     EventAdded,
     /// An event was removed.
     EventRemoved,
+    /// An event was renamed (a removal and an addition with an identical
+    /// shape).
+    EventRenamed,
     /// An event changed.
     EventChanged,
 }
@@ -73,11 +80,13 @@ impl ChangeKind {
             ChangeKind::FunctionChanged => 2,
             ChangeKind::FunctionAdded => 3,
             ChangeKind::TypeRemoved => 4,
-            ChangeKind::TypeChanged => 5,
-            ChangeKind::TypeAdded => 6,
-            ChangeKind::EventRemoved => 7,
-            ChangeKind::EventChanged => 8,
-            ChangeKind::EventAdded => 9,
+            ChangeKind::TypeRenamed => 5,
+            ChangeKind::TypeChanged => 6,
+            ChangeKind::TypeAdded => 7,
+            ChangeKind::EventRemoved => 8,
+            ChangeKind::EventRenamed => 9,
+            ChangeKind::EventChanged => 10,
+            ChangeKind::EventAdded => 11,
         }
     }
 }
@@ -329,106 +338,323 @@ fn signature_key(function: &SpecFunction) -> String {
 fn diff_types(old: &ContractInterface, new: &ContractInterface, out: &mut Vec<Change>) {
     let old_types = type_map(old);
     let new_types = type_map(new);
-    for (name, old_render) in &old_types {
-        match new_types.get(name) {
-            None => out.push(Change {
-                kind: ChangeKind::TypeRemoved,
-                severity: Severity::Breaking,
-                path: format!("type::{name}"),
-                detail: format!("type `{name}` was removed"),
-                old: Some(old_render.clone()),
-                new: None,
-            }),
-            Some(new_render) => {
-                if old_render != new_render {
-                    out.push(Change {
-                        kind: ChangeKind::TypeChanged,
-                        severity: Severity::Breaking,
-                        path: format!("type::{name}"),
-                        detail: format!("type `{name}` changed"),
-                        old: Some(old_render.clone()),
-                        new: Some(new_render.clone()),
-                    });
-                }
+
+    for (name, old_entry) in &old_types {
+        if let Some(new_entry) = new_types.get(name) {
+            if old_entry.render != new_entry.render {
+                out.push(Change {
+                    kind: ChangeKind::TypeChanged,
+                    severity: Severity::Breaking,
+                    path: format!("type::{name}"),
+                    detail: format!("type `{name}` changed"),
+                    old: Some(old_entry.render.clone()),
+                    new: Some(new_entry.render.clone()),
+                });
             }
         }
     }
-    for (name, new_render) in &new_types {
-        if !old_types.contains_key(name) {
-            out.push(Change {
-                kind: ChangeKind::TypeAdded,
-                severity: Severity::NonBreaking,
-                path: format!("type::{name}"),
-                detail: format!("type `{name}` was added"),
-                old: None,
-                new: Some(new_render.clone()),
-            });
+
+    let removed: Vec<(&String, &TypeEntry)> = old_types
+        .iter()
+        .filter(|(name, _)| !new_types.contains_key(*name))
+        .collect();
+    let added: Vec<(&String, &TypeEntry)> = new_types
+        .iter()
+        .filter(|(name, _)| !old_types.contains_key(*name))
+        .collect();
+
+    // Pair a removal with an addition only when their canonical shape is
+    // identical and the pairing is unambiguous (exactly one removal and one
+    // addition for that shape). Otherwise, do not guess.
+    let removed_by_shape = group_types_by_shape(&removed);
+    let added_by_shape = group_types_by_shape(&added);
+    let mut renamed: Vec<(&String, &TypeEntry, &String, &TypeEntry)> = Vec::new();
+    for (shape, removals) in &removed_by_shape {
+        if let Some(additions) = added_by_shape.get(shape) {
+            if removals.len() == 1 && additions.len() == 1 {
+                renamed.push((removals[0].0, removals[0].1, additions[0].0, additions[0].1));
+            }
         }
+    }
+    renamed.sort_by(|a, b| a.0.cmp(b.0).then_with(|| a.2.cmp(b.2)));
+
+    let paired_removed: std::collections::BTreeSet<&str> = renamed
+        .iter()
+        .map(|(old_name, _, _, _)| old_name.as_str())
+        .collect();
+    let paired_added: std::collections::BTreeSet<&str> = renamed
+        .iter()
+        .map(|(_, _, new_name, _)| new_name.as_str())
+        .collect();
+
+    for (old_name, old_entry, new_name, new_entry) in &renamed {
+        out.push(Change {
+            kind: ChangeKind::TypeRenamed,
+            severity: Severity::Breaking,
+            path: format!("type::{old_name}"),
+            detail: format!(
+                "type `{old_name}` was renamed to `{new_name}` (identical shape; heuristic pairing)"
+            ),
+            old: Some(old_entry.render.clone()),
+            new: Some(new_entry.render.clone()),
+        });
+    }
+    for (name, entry) in &removed {
+        if paired_removed.contains(name.as_str()) {
+            continue;
+        }
+        out.push(Change {
+            kind: ChangeKind::TypeRemoved,
+            severity: Severity::Breaking,
+            path: format!("type::{name}"),
+            detail: format!("type `{name}` was removed"),
+            old: Some(entry.render.clone()),
+            new: None,
+        });
+    }
+    for (name, entry) in &added {
+        if paired_added.contains(name.as_str()) {
+            continue;
+        }
+        out.push(Change {
+            kind: ChangeKind::TypeAdded,
+            severity: Severity::NonBreaking,
+            path: format!("type::{name}"),
+            detail: format!("type `{name}` was added"),
+            old: None,
+            new: Some(entry.render.clone()),
+        });
     }
 }
 
 fn diff_events(old: &ContractInterface, new: &ContractInterface, out: &mut Vec<Change>) {
     for event in &old.events {
-        match new
+        if let Some(replacement) = new
             .events
             .iter()
             .find(|candidate| candidate.name == event.name)
         {
-            None => out.push(Change {
-                kind: ChangeKind::EventRemoved,
-                severity: Severity::Breaking,
-                path: format!("event::{}", event.name),
-                detail: format!("event `{}` was removed", event.name),
-                old: Some(render_event(event)),
-                new: None,
-            }),
-            Some(replacement) => {
-                if event != replacement {
-                    out.push(Change {
-                        kind: ChangeKind::EventChanged,
-                        severity: Severity::Breaking,
-                        path: format!("event::{}", event.name),
-                        detail: format!("event `{}` changed", event.name),
-                        old: Some(render_event(event)),
-                        new: Some(render_event(replacement)),
-                    });
-                }
+            if event != replacement {
+                out.push(Change {
+                    kind: ChangeKind::EventChanged,
+                    severity: Severity::Breaking,
+                    path: format!("event::{}", event.name),
+                    detail: format!("event `{}` changed", event.name),
+                    old: Some(render_event(event)),
+                    new: Some(render_event(replacement)),
+                });
             }
         }
     }
-    for event in &new.events {
-        if !old
-            .events
-            .iter()
-            .any(|candidate| candidate.name == event.name)
-        {
-            out.push(Change {
-                kind: ChangeKind::EventAdded,
-                severity: Severity::NonBreaking,
-                path: format!("event::{}", event.name),
-                detail: format!("event `{}` was added", event.name),
-                old: None,
-                new: Some(render_event(event)),
-            });
+
+    let removed: Vec<&SpecEvent> = old
+        .events
+        .iter()
+        .filter(|event| {
+            !new.events
+                .iter()
+                .any(|candidate| candidate.name == event.name)
+        })
+        .collect();
+    let added: Vec<&SpecEvent> = new
+        .events
+        .iter()
+        .filter(|event| {
+            !old.events
+                .iter()
+                .any(|candidate| candidate.name == event.name)
+        })
+        .collect();
+
+    // Pair a removal with an addition only when the prefix topics, parameters,
+    // and data format match exactly and the pairing is unambiguous (exactly one
+    // removal and one addition for that shape). Otherwise, do not guess.
+    let removed_by_shape = group_events_by_shape(&removed);
+    let added_by_shape = group_events_by_shape(&added);
+    let mut renamed: Vec<(&SpecEvent, &SpecEvent)> = Vec::new();
+    for (shape, removals) in &removed_by_shape {
+        if let Some(additions) = added_by_shape.get(shape) {
+            if removals.len() == 1 && additions.len() == 1 {
+                renamed.push((removals[0], additions[0]));
+            }
         }
+    }
+    renamed.sort_by(|a, b| {
+        a.0.name
+            .cmp(&b.0.name)
+            .then_with(|| a.1.name.cmp(&b.1.name))
+    });
+
+    let paired_removed: std::collections::BTreeSet<&str> = renamed
+        .iter()
+        .map(|(event, _)| event.name.as_str())
+        .collect();
+    let paired_added: std::collections::BTreeSet<&str> = renamed
+        .iter()
+        .map(|(_, event)| event.name.as_str())
+        .collect();
+
+    for (old_event, new_event) in &renamed {
+        out.push(Change {
+            kind: ChangeKind::EventRenamed,
+            severity: Severity::Breaking,
+            path: format!("event::{}", old_event.name),
+            detail: format!(
+                "event `{}` was renamed to `{}` (identical shape; heuristic pairing)",
+                old_event.name, new_event.name
+            ),
+            old: Some(render_event(old_event)),
+            new: Some(render_event(new_event)),
+        });
+    }
+    for event in &removed {
+        if paired_removed.contains(event.name.as_str()) {
+            continue;
+        }
+        out.push(Change {
+            kind: ChangeKind::EventRemoved,
+            severity: Severity::Breaking,
+            path: format!("event::{}", event.name),
+            detail: format!("event `{}` was removed", event.name),
+            old: Some(render_event(event)),
+            new: None,
+        });
+    }
+    for event in &added {
+        if paired_added.contains(event.name.as_str()) {
+            continue;
+        }
+        out.push(Change {
+            kind: ChangeKind::EventAdded,
+            severity: Severity::NonBreaking,
+            path: format!("event::{}", event.name),
+            detail: format!("event `{}` was added", event.name),
+            old: None,
+            new: Some(render_event(event)),
+        });
     }
 }
 
-fn type_map(interface: &ContractInterface) -> std::collections::BTreeMap<String, String> {
+fn group_events_by_shape<'a>(
+    events: &[&'a SpecEvent],
+) -> std::collections::BTreeMap<String, Vec<&'a SpecEvent>> {
+    let mut groups: std::collections::BTreeMap<String, Vec<&SpecEvent>> =
+        std::collections::BTreeMap::new();
+    for event in events {
+        groups
+            .entry(event_shape_key(event))
+            .or_default()
+            .push(event);
+    }
+    groups
+}
+
+fn event_shape_key(event: &SpecEvent) -> String {
+    let prefix_topics = event.prefix_topics.join("\u{1f}");
+    let params = event
+        .params
+        .iter()
+        .map(|param| format!("{}:{}@{}", param.name, param.ty, param.location))
+        .collect::<Vec<_>>()
+        .join(",");
+    format!("event[{prefix_topics}]({params}){}", event.data_format)
+}
+
+struct TypeEntry {
+    render: String,
+    shape: String,
+}
+
+fn type_map(interface: &ContractInterface) -> std::collections::BTreeMap<String, TypeEntry> {
     let mut map = std::collections::BTreeMap::new();
     for item in &interface.structs {
-        map.insert(item.name.clone(), render_struct(item));
+        map.insert(
+            item.name.clone(),
+            TypeEntry {
+                render: render_struct(item),
+                shape: struct_shape_key(item),
+            },
+        );
     }
     for item in &interface.unions {
-        map.insert(item.name.clone(), render_union(item));
+        map.insert(
+            item.name.clone(),
+            TypeEntry {
+                render: render_union(item),
+                shape: union_shape_key(item),
+            },
+        );
     }
     for item in &interface.enums {
-        map.insert(item.name.clone(), render_enum(&item.name, &item.cases));
+        map.insert(
+            item.name.clone(),
+            TypeEntry {
+                render: render_enum(&item.name, &item.cases),
+                shape: enum_shape_key("enum", &item.cases),
+            },
+        );
     }
     for item in &interface.error_enums {
-        map.insert(item.name.clone(), render_enum(&item.name, &item.cases));
+        map.insert(
+            item.name.clone(),
+            TypeEntry {
+                render: render_enum(&item.name, &item.cases),
+                shape: enum_shape_key("error_enum", &item.cases),
+            },
+        );
     }
     map
+}
+
+fn group_types_by_shape<'a>(
+    types: &[(&'a String, &'a TypeEntry)],
+) -> std::collections::BTreeMap<String, Vec<(&'a String, &'a TypeEntry)>> {
+    let mut groups: std::collections::BTreeMap<String, Vec<(&String, &TypeEntry)>> =
+        std::collections::BTreeMap::new();
+    for &(name, entry) in types {
+        groups
+            .entry(entry.shape.clone())
+            .or_default()
+            .push((name, entry));
+    }
+    groups
+}
+
+fn struct_shape_key(item: &SpecStruct) -> String {
+    let fields = item
+        .fields
+        .iter()
+        .map(|field| format!("{}:{}", field.name, field.ty))
+        .collect::<Vec<_>>()
+        .join(",");
+    format!("struct({fields})")
+}
+
+fn union_shape_key(item: &SpecUnion) -> String {
+    let cases = item
+        .cases
+        .iter()
+        .map(|case| {
+            let types = case
+                .types
+                .iter()
+                .map(ToString::to_string)
+                .collect::<Vec<_>>()
+                .join(",");
+            format!("{}({types})", case.name)
+        })
+        .collect::<Vec<_>>()
+        .join("|");
+    format!("union{{{cases}}}")
+}
+
+fn enum_shape_key(kind: &str, cases: &[observatory_spec::SpecEnumCase]) -> String {
+    let cases = cases
+        .iter()
+        .map(|case| format!("{}={}", case.name, case.value))
+        .collect::<Vec<_>>()
+        .join(",");
+    format!("{kind}{{{cases}}}")
 }
 
 fn same_signature(a: &SpecFunction, b: &SpecFunction) -> bool {
@@ -555,8 +781,10 @@ fn render_event(event: &SpecEvent) -> String {
 mod tests {
     use super::*;
     use observatory_spec::normalize;
-    use observatory_testutil::spec::{spec_enum, spec_event, spec_function, spec_struct};
-    use stellar_xdr::{ScSpecEntry, ScSpecTypeDef};
+    use observatory_testutil::spec::{
+        spec_enum, spec_error_enum, spec_event, spec_function, spec_struct, spec_union,
+    };
+    use stellar_xdr::{ScSpecEntry, ScSpecEventParamLocationV0, ScSpecTypeDef};
 
     fn interface(entries: Vec<ScSpecEntry>) -> ContractInterface {
         ContractInterface::from_spec(normalize(entries))
@@ -753,6 +981,214 @@ mod tests {
             .any(|change| change.kind == ChangeKind::FunctionRenamed));
         assert_eq!(result.summary.breaking, 2);
         assert_eq!(result.summary.non_breaking, 1);
+    }
+
+    #[test]
+    fn detects_unambiguous_struct_rename() {
+        let old = interface(vec![spec_struct("OldName", &[("a", ScSpecTypeDef::U32)])]);
+        let new = interface(vec![spec_struct("NewName", &[("a", ScSpecTypeDef::U32)])]);
+        let result = diff(&old, &new);
+        assert_eq!(result.changes.len(), 1);
+        assert_eq!(result.changes[0].kind, ChangeKind::TypeRenamed);
+        assert_eq!(result.changes[0].severity, Severity::Breaking);
+        assert_eq!(result.changes[0].path, "type::OldName");
+        assert!(result.changes[0].detail.contains("renamed to `NewName`"));
+        assert!(result.changes[0].detail.contains("heuristic"));
+    }
+
+    #[test]
+    fn detects_unambiguous_enum_and_union_renames() {
+        let old = interface(vec![
+            spec_enum("OldEnum", &[("A", 0), ("B", 1)]),
+            spec_union(
+                "OldUnion",
+                &[("None", None), ("Some", Some(vec![ScSpecTypeDef::U32]))],
+            ),
+        ]);
+        let new = interface(vec![
+            spec_enum("NewEnum", &[("A", 0), ("B", 1)]),
+            spec_union(
+                "NewUnion",
+                &[("None", None), ("Some", Some(vec![ScSpecTypeDef::U32]))],
+            ),
+        ]);
+        let result = diff(&old, &new);
+        assert_eq!(result.changes.len(), 2);
+        assert!(result
+            .changes
+            .iter()
+            .all(|change| change.kind == ChangeKind::TypeRenamed));
+        assert!(result
+            .changes
+            .iter()
+            .any(|change| change.path == "type::OldEnum" && change.detail.contains("NewEnum")));
+        assert!(result
+            .changes
+            .iter()
+            .any(|change| change.path == "type::OldUnion" && change.detail.contains("NewUnion")));
+    }
+
+    #[test]
+    fn detects_unambiguous_error_enum_rename() {
+        let old = interface(vec![spec_error_enum("OldError", &[("NotFound", 1)])]);
+        let new = interface(vec![spec_error_enum("NewError", &[("NotFound", 1)])]);
+        let result = diff(&old, &new);
+        assert_eq!(result.changes.len(), 1);
+        assert_eq!(result.changes[0].kind, ChangeKind::TypeRenamed);
+    }
+
+    #[test]
+    fn different_type_shape_is_not_a_rename() {
+        let old = interface(vec![spec_struct("OldName", &[("a", ScSpecTypeDef::U32)])]);
+        let new = interface(vec![spec_struct("NewName", &[("a", ScSpecTypeDef::U64)])]);
+        let result = diff(&old, &new);
+        assert!(!result
+            .changes
+            .iter()
+            .any(|change| change.kind == ChangeKind::TypeRenamed));
+        assert!(result
+            .changes
+            .iter()
+            .any(|change| change.kind == ChangeKind::TypeRemoved));
+        assert!(result
+            .changes
+            .iter()
+            .any(|change| change.kind == ChangeKind::TypeAdded));
+    }
+
+    #[test]
+    fn enum_and_error_enum_are_not_paired() {
+        let old = interface(vec![spec_enum("OldName", &[("A", 0)])]);
+        let new = interface(vec![spec_error_enum("NewName", &[("A", 0)])]);
+        let result = diff(&old, &new);
+        assert!(!result
+            .changes
+            .iter()
+            .any(|change| change.kind == ChangeKind::TypeRenamed));
+    }
+
+    #[test]
+    fn ambiguous_type_shape_is_not_guessed() {
+        let old = interface(vec![
+            spec_struct("First", &[("a", ScSpecTypeDef::U32)]),
+            spec_struct("Second", &[("a", ScSpecTypeDef::U32)]),
+        ]);
+        let new = interface(vec![spec_struct("Third", &[("a", ScSpecTypeDef::U32)])]);
+        let result = diff(&old, &new);
+        assert!(!result
+            .changes
+            .iter()
+            .any(|change| change.kind == ChangeKind::TypeRenamed));
+        assert_eq!(
+            result
+                .changes
+                .iter()
+                .filter(|change| change.kind == ChangeKind::TypeRemoved)
+                .count(),
+            2
+        );
+        assert_eq!(
+            result
+                .changes
+                .iter()
+                .filter(|change| change.kind == ChangeKind::TypeAdded)
+                .count(),
+            1
+        );
+    }
+
+    #[test]
+    fn detects_unambiguous_event_rename() {
+        let old = interface(vec![spec_event(
+            "old_event",
+            &["transfer", "v1"],
+            &[(
+                "amount",
+                ScSpecTypeDef::I128,
+                ScSpecEventParamLocationV0::Data,
+            )],
+        )]);
+        let new = interface(vec![spec_event(
+            "new_event",
+            &["transfer", "v1"],
+            &[(
+                "amount",
+                ScSpecTypeDef::I128,
+                ScSpecEventParamLocationV0::Data,
+            )],
+        )]);
+        let result = diff(&old, &new);
+        assert_eq!(result.changes.len(), 1);
+        assert_eq!(result.changes[0].kind, ChangeKind::EventRenamed);
+        assert_eq!(result.changes[0].severity, Severity::Breaking);
+        assert_eq!(result.changes[0].path, "event::old_event");
+        assert!(result.changes[0].detail.contains("renamed to `new_event`"));
+        assert!(result.changes[0].detail.contains("heuristic"));
+    }
+
+    #[test]
+    fn different_event_shape_is_not_a_rename() {
+        let old = interface(vec![spec_event(
+            "old_event",
+            &["transfer"],
+            &[(
+                "amount",
+                ScSpecTypeDef::I128,
+                ScSpecEventParamLocationV0::Data,
+            )],
+        )]);
+        let new = interface(vec![spec_event(
+            "new_event",
+            &["mint"],
+            &[(
+                "amount",
+                ScSpecTypeDef::I128,
+                ScSpecEventParamLocationV0::Data,
+            )],
+        )]);
+        let result = diff(&old, &new);
+        assert!(!result
+            .changes
+            .iter()
+            .any(|change| change.kind == ChangeKind::EventRenamed));
+        assert!(result
+            .changes
+            .iter()
+            .any(|change| change.kind == ChangeKind::EventRemoved));
+        assert!(result
+            .changes
+            .iter()
+            .any(|change| change.kind == ChangeKind::EventAdded));
+    }
+
+    #[test]
+    fn ambiguous_event_shape_is_not_guessed() {
+        let old = interface(vec![
+            spec_event("first", &["transfer"], &[]),
+            spec_event("second", &["transfer"], &[]),
+        ]);
+        let new = interface(vec![spec_event("third", &["transfer"], &[])]);
+        let result = diff(&old, &new);
+        assert!(!result
+            .changes
+            .iter()
+            .any(|change| change.kind == ChangeKind::EventRenamed));
+        assert_eq!(
+            result
+                .changes
+                .iter()
+                .filter(|change| change.kind == ChangeKind::EventRemoved)
+                .count(),
+            2
+        );
+        assert_eq!(
+            result
+                .changes
+                .iter()
+                .filter(|change| change.kind == ChangeKind::EventAdded)
+                .count(),
+            1
+        );
     }
 
     #[test]
