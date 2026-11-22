@@ -83,6 +83,8 @@ pub const RULE_IDS: &[&str] = &[
     "interface.duplicate-type",
     "interface.empty",
     "interface.no-functions",
+    "naming.mixed-script",
+    "naming.zero-width",
     "spec.error",
     "spec.info",
     "spec.warning",
@@ -105,6 +107,8 @@ pub const EXPERIMENTAL_RULE_IDS: &[&str] = &[
     "function.duplicate-param",
     "interface.empty",
     "interface.no-functions",
+    "naming.mixed-script",
+    "naming.zero-width",
     "type.duplicate-case",
     "type.duplicate-field",
 ];
@@ -400,7 +404,109 @@ pub fn audit_interface(interface: &ContractInterface) -> AuditReport {
         }
     }
 
+    findings.extend(naming_findings(interface));
+
     AuditReport::from_findings(findings)
+}
+
+fn naming_findings(interface: &ContractInterface) -> Vec<Finding> {
+    let mut names: Vec<(&str, &str)> = Vec::new();
+    for function in &interface.functions {
+        names.push(("function", function.name.as_str()));
+        for input in &function.inputs {
+            names.push(("function", input.name.as_str()));
+        }
+    }
+    for item in &interface.structs {
+        names.push(("type", item.name.as_str()));
+        for field in &item.fields {
+            names.push(("type", field.name.as_str()));
+        }
+    }
+    for item in &interface.unions {
+        names.push(("type", item.name.as_str()));
+        for case in &item.cases {
+            names.push(("type", case.name.as_str()));
+        }
+    }
+    for item in interface
+        .enums
+        .iter()
+        .map(|item| (&item.name, &item.cases))
+        .chain(
+            interface
+                .error_enums
+                .iter()
+                .map(|item| (&item.name, &item.cases)),
+        )
+    {
+        names.push(("type", item.0.as_str()));
+        for case in item.1 {
+            names.push(("type", case.name.as_str()));
+        }
+    }
+    for event in &interface.events {
+        names.push(("event", event.name.as_str()));
+    }
+
+    let mut seen = BTreeSet::new();
+    let mut findings = Vec::new();
+    for (kind, name) in names {
+        if name.is_empty() || !seen.insert((kind, name)) {
+            continue;
+        }
+        let path = format!("{kind}::{name}");
+        if has_zero_width(name) {
+            findings.push(Finding {
+                id: "naming.zero-width".to_string(),
+                severity: FindingSeverity::Warn,
+                message: format!("name `{name}` contains zero-width or control characters"),
+                path: Some(path),
+                experimental: true,
+            });
+        }
+        if has_mixed_script(name) {
+            findings.push(Finding {
+                id: "naming.mixed-script".to_string(),
+                severity: FindingSeverity::Warn,
+                message: format!(
+                    "name `{name}` mixes ASCII and non-ASCII letters (possible homoglyph)"
+                ),
+                path: Some(format!("{kind}::{name}")),
+                experimental: true,
+            });
+        }
+    }
+    findings
+}
+
+fn has_zero_width(name: &str) -> bool {
+    name.chars().any(|character| {
+        character.is_control()
+            || matches!(
+                character,
+                '\u{00AD}'
+                    | '\u{200B}'..='\u{200F}'
+                    | '\u{202A}'..='\u{202E}'
+                    | '\u{2060}'..='\u{206F}'
+                    | '\u{FEFF}'
+            )
+    })
+}
+
+fn has_mixed_script(name: &str) -> bool {
+    let mut ascii_letter = false;
+    let mut non_ascii_letter = false;
+    for character in name.chars() {
+        if character.is_alphabetic() {
+            if character.is_ascii() {
+                ascii_letter = true;
+            } else {
+                non_ascii_letter = true;
+            }
+        }
+    }
+    ascii_letter && non_ascii_letter
 }
 
 /// Run interface heuristics under a rule configuration.
@@ -1002,5 +1108,37 @@ mod tests {
                 finding.id
             );
         }
+    }
+
+    #[test]
+    fn naming_heuristics_are_experimental_and_implemented() {
+        assert!(has_mixed_script("\u{0430}mount"));
+        assert!(!has_mixed_script("amount"));
+        assert!(has_zero_width("Pay\u{200B}load"));
+        assert!(!has_zero_width("Payload"));
+
+        for id in ["naming.mixed-script", "naming.zero-width"] {
+            assert!(RULE_IDS.contains(&id), "{id} must be registered");
+            assert!(
+                EXPERIMENTAL_RULE_IDS.contains(&id),
+                "{id} must be experimental"
+            );
+        }
+
+        let default = AuditConfig::default();
+        let report = default.apply(AuditReport::from_findings(vec![Finding {
+            id: "naming.mixed-script".to_string(),
+            severity: FindingSeverity::Warn,
+            message: "test".to_string(),
+            path: None,
+            experimental: true,
+        }]));
+        assert!(
+            report
+                .findings
+                .iter()
+                .all(|finding| !finding.id.starts_with("naming.")),
+            "experimental naming rules must be off by default"
+        );
     }
 }

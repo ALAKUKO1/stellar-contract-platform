@@ -33,6 +33,8 @@ Every emitted id is listed here. `docs/security.md` and the rule registry in
 | `spec.info` | WARN | no | Reserved for an informational specification issue. | No current check emits it. |
 | `interface.empty` | WARN | yes | The interface declares no functions, types, or events, so there is nothing to inspect or call. | A stub or intermediate build artifact can legitimately be empty. |
 | `interface.no-functions` | WARN | yes | The interface declares types or events but no functions, so consumers have no entry point. | Event-only or type-only ABI surfaces are possible, although unusual. |
+| `naming.mixed-script` | WARN | yes | A name mixes ASCII and non-ASCII letters, which can be used to create visually confusable (homoglyph) identifiers. | Experimental and low confidence. Identifiers from non-Latin languages legitimately mix scripts; review each finding in context. This is not a vulnerability. |
+| `naming.zero-width` | WARN | yes | A name contains zero-width, control, or bidirectional formatting characters that are invisible in many editors and can disguise an identifier. | Experimental and low confidence. Some generated bindings may include unusual characters legitimately. This is not a vulnerability. |
 | `interface.duplicate-function` | ERROR | no | Two functions with one name cannot both be called unambiguously. | Compares names only; an overload with a distinct name is not reported. |
 | `interface.duplicate-type` | ERROR | no | A user-defined type name must resolve to a single definition. | Applies to structs, unions, enums, and error enums across the whole interface. |
 | `interface.duplicate-event` | ERROR | no | Two events with one name cannot be told apart by consumers. | Compares names only, not topics or payloads. |

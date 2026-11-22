@@ -638,3 +638,31 @@ fn policy_file_selects_rules_and_echoes_the_resolved_policy() {
         .stdout(predicate::str::contains("function_removal_is_breaking"))
         .stdout(predicate::str::contains("\"code\":\"invalid_input\""));
 }
+
+#[test]
+fn verify_batch_reports_aggregate_status_from_a_manifest() {
+    let wasm = module_with_spec(&[spec_function("hello", &[], Some(ScSpecTypeDef::Bool))]);
+    let wasm_file = write_temp(&wasm, ".wasm");
+    let fixture = instance_fixture([7u8; 32]);
+    let fixture_file = write_temp(fixture.as_bytes(), ".json");
+    let contract_a = format!("{}", stellar_strkey::Contract([9u8; 32]));
+    let contract_b = format!("{}", stellar_strkey::Contract([10u8; 32]));
+    let wasm_path = wasm_file.path().to_str().unwrap();
+    let fixture_path = fixture_file.path().to_str().unwrap();
+    let manifest = serde_json::json!({
+        "entries": [
+            {"artifact": wasm_path, "contract": contract_a, "rpc_fixture": fixture_path},
+            {"artifact": wasm_path, "contract": contract_b, "rpc_fixture": fixture_path}
+        ]
+    });
+    let manifest_file = write_temp(manifest.to_string().as_bytes(), ".json");
+
+    binary()
+        .args(["verify", "batch", manifest_file.path().to_str().unwrap()])
+        .arg("--json")
+        .assert()
+        .code(7)
+        .stdout(predicate::str::contains("\"kind\": \"verify.batch\""))
+        .stdout(predicate::str::contains("\"total\": 2"))
+        .stdout(predicate::str::contains("\"mismatched\": 2"));
+}
