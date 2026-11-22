@@ -6,7 +6,7 @@
 
 use serde_json::{json, Value};
 
-use crate::api::{METRICS_PATH, ROUTES};
+use crate::api::{ERRORS_PATH, METRICS_PATH, ROUTES};
 
 /// The OpenAPI version implemented by this document.
 pub const OPENAPI_VERSION: &str = "3.0.3";
@@ -197,7 +197,7 @@ pub fn document() -> Value {
 pub fn is_public(path: &str) -> bool {
     matches!(
         path,
-        "/api/v1/health" | "/api/v1/readiness" | "/api/v1/version" | METRICS_PATH
+        "/api/v1/health" | "/api/v1/readiness" | "/api/v1/version" | METRICS_PATH | ERRORS_PATH
     )
 }
 
@@ -296,6 +296,7 @@ fn summary_for(path: &str) -> &'static str {
         "/api/v1/readiness" => "Readiness probe",
         "/api/v1/version" => "Version information",
         METRICS_PATH => "Aggregate request metrics",
+        ERRORS_PATH => "Machine-readable error catalog",
         "/api/v1/contracts/inspect" => "Inspect a WASM artifact",
         "/api/v1/contracts/spec" => "Read the contract specification",
         "/api/v1/contracts/diff" => "Diff two interfaces",

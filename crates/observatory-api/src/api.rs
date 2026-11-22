@@ -23,6 +23,7 @@ use crate::dto::{
     CreateWebhookRequest, DiffRequest, EventsRequest, InspectRequest, UpdateWebhookRequest,
     WasmRequest,
 };
+use crate::errors::entry as error_entry;
 use crate::http::{Request, Response};
 use crate::metrics::{self, Metrics};
 
@@ -32,6 +33,9 @@ pub const API_PREFIX: &str = "/api/v1";
 /// The Prometheus metrics endpoint path.
 pub const METRICS_PATH: &str = "/api/v1/metrics";
 
+/// The machine-readable error catalog endpoint path.
+pub const ERRORS_PATH: &str = "/api/v1/errors";
+
 /// The declared routes: `(method, path)`. Used by the router and by the
 /// OpenAPI synchronization test.
 pub const ROUTES: &[(&str, &str)] = &[
@@ -39,6 +43,7 @@ pub const ROUTES: &[(&str, &str)] = &[
     ("GET", "/api/v1/readiness"),
     ("GET", "/api/v1/version"),
     ("GET", METRICS_PATH),
+    ("GET", ERRORS_PATH),
     ("POST", "/api/v1/contracts/inspect"),
     ("POST", "/api/v1/contracts/spec"),
     ("POST", "/api/v1/contracts/diff"),
@@ -75,52 +80,41 @@ pub struct ApiError {
 }
 
 impl ApiError {
-    fn new(status: u16, code: &str, message: impl Into<String>) -> Self {
+    /// Build an error from the catalog.
+    ///
+    /// The status always comes from [`crate::errors::ERROR_CATALOG`], so a
+    /// response cannot disagree with the published catalog. A code missing from
+    /// the catalog is a programming error and panics during tests.
+    fn new(code: &str, message: impl Into<String>) -> Self {
+        let entry = error_entry(code)
+            .unwrap_or_else(|| panic!("error code `{code}` is missing from the catalog"));
         ApiError {
-            status,
+            status: entry.status,
             code: code.to_string(),
             message: message.into(),
         }
     }
 
     fn unauthorized() -> Self {
-        ApiError::new(401, "unauthorized", "a valid API key is required")
+        ApiError::new("unauthorized", "a valid API key is required")
     }
 
     fn forbidden() -> Self {
-        ApiError::new(
-            403,
-            "forbidden",
-            "the API key lacks the required permission",
-        )
+        ApiError::new("forbidden", "the API key lacks the required permission")
     }
 
     fn bad_request(message: impl Into<String>) -> Self {
-        ApiError::new(400, "bad_request", message)
+        ApiError::new("bad_request", message)
     }
 
     fn not_found(message: impl Into<String>) -> Self {
-        ApiError::new(404, "not_found", message)
+        ApiError::new("not_found", message)
     }
 }
 
 impl From<ObservatoryError> for ApiError {
     fn from(error: ObservatoryError) -> Self {
-        let status = match error {
-            ObservatoryError::InvalidInput(_) => 400,
-            ObservatoryError::Decode(_) | ObservatoryError::Wasm(_) | ObservatoryError::Spec(_) => {
-                400
-            }
-            ObservatoryError::Unsupported(_) => 422,
-            ObservatoryError::Rpc(_) => 502,
-            ObservatoryError::Verification(_) => 422,
-            ObservatoryError::Io(_) | ObservatoryError::Internal(_) => 500,
-        };
-        ApiError {
-            status,
-            code: error.code().as_str().to_string(),
-            message: error.to_string(),
-        }
+        ApiError::new(error.code().as_str(), error.to_string())
     }
 }
 
@@ -304,13 +298,13 @@ impl Api {
         }
 
         let mut response = if !decision.allowed {
-            error_response(429, "rate_limited", "rate limit exceeded")
+            error_response(&ApiError::new("rate_limited", "rate limit exceeded"))
         } else if request.method == "OPTIONS" {
             self.preflight(request)
         } else {
             match self.route(request, principal.as_ref(), now_secs, &request_id) {
                 Ok(response) => response,
-                Err(error) => error_response(error.status, &error.code, &error.message),
+                Err(error) => error_response(&error),
             }
         };
         if decision.allowed {
@@ -373,10 +367,16 @@ impl Api {
 
     fn preflight(&self, request: &Request) -> Response {
         let Some(origin) = request.header("origin") else {
-            return error_response(400, "bad_request", "preflight requires an Origin header");
+            return error_response(&ApiError::new(
+                "bad_request",
+                "preflight requires an Origin header",
+            ));
         };
         if !self.config.cors.is_allowed_origin(origin) {
-            return error_response(403, "cors_origin_denied", "origin is not allowed");
+            return error_response(&ApiError::new(
+                "cors_origin_denied",
+                "origin is not allowed",
+            ));
         }
         Response::empty(204)
     }
@@ -476,6 +476,11 @@ impl Api {
                     "schema_version": SCHEMA_VERSION,
                     "api_version": "v1",
                 }),
+            )),
+            ("GET", ERRORS_PATH) => Ok(response(
+                200,
+                "errors",
+                &serde_json::json!({ "errors": crate::errors::ERROR_CATALOG }),
             )),
             ("POST", "/api/v1/keys") => {
                 self.require(principal, Permission::ManageKeys)?;
@@ -650,7 +655,7 @@ impl Api {
                 if let Some(id) = query_value(request, "id") {
                     match queue.job(id) {
                         Some(job) => Ok(response(200, "job", job)),
-                        None => Err(ApiError::new(404, "not_found", "unknown job")),
+                        None => Err(ApiError::new("not_found", "unknown job")),
                     }
                 } else {
                     Ok(response(200, "jobs", &queue.jobs()))
@@ -689,12 +694,11 @@ impl Api {
                 // Distinguish a known path with the wrong method from an unknown path.
                 if ROUTES.iter().any(|(_, path)| *path == request.path) {
                     Err(ApiError::new(
-                        405,
                         "method_not_allowed",
                         "method not allowed for this path",
                     ))
                 } else {
-                    Err(ApiError::new(404, "not_found", "unknown route"))
+                    Err(ApiError::new("not_found", "unknown route"))
                 }
             }
         }
@@ -785,15 +789,11 @@ impl Api {
 }
 
 fn method_not_allowed() -> ApiError {
-    ApiError::new(
-        405,
-        "method_not_allowed",
-        "method not allowed for this path",
-    )
+    ApiError::new("method_not_allowed", "method not allowed for this path")
 }
 
 fn webhook_not_found() -> ApiError {
-    ApiError::new(404, "not_found", "unknown webhook subscription")
+    ApiError::new("not_found", "unknown webhook subscription")
 }
 
 fn parse_webhook_events(values: &[String]) -> Result<Vec<WebhookEvent>, ApiError> {
@@ -833,7 +833,6 @@ fn parse_json<T: serde::de::DeserializeOwned>(request: &Request) -> Result<T, Ap
         if let Some(value) = request.header("content-type") {
             if !value.contains("json") {
                 return Err(ApiError::new(
-                    415,
                     "unsupported_media_type",
                     "Content-Type must be application/json",
                 ));
@@ -850,18 +849,18 @@ fn response<T: Serialize>(status: u16, kind: &str, data: &T) -> Response {
             let value: Value = serde_json::from_str(&json).unwrap_or(Value::Null);
             Response::json(status, &value)
         }
-        Err(_) => error_response(500, "internal", "report serialization failed"),
+        Err(_) => error_response(&ApiError::new("internal", "report serialization failed")),
     }
 }
 
-fn error_response(status: u16, code: &str, message: &str) -> Response {
+fn error_response(error: &ApiError) -> Response {
     let body = serde_json::json!({
         "schema_version": SCHEMA_VERSION,
         "kind": "error",
-        "code": code,
-        "message": message,
+        "code": error.code,
+        "message": error.message,
     });
-    Response::json(status, &body)
+    Response::json(error.status, &body)
 }
 
 #[cfg(test)]
@@ -926,6 +925,34 @@ mod tests {
         let version = api.handle(&get("/api/v1/version"), "ip", 0);
         assert_eq!(version.status, 200);
         assert!(String::from_utf8_lossy(&version.body).contains("\"api_version\":\"v1\""));
+    }
+
+    #[test]
+    fn error_catalog_endpoint_is_public_and_complete() {
+        let api = Api::new(PlatformConfig::default());
+        let response = api.handle(&get(ERRORS_PATH), "ip", 0);
+        assert_eq!(response.status, 200);
+        let body: Value = serde_json::from_slice(&response.body).unwrap();
+        let errors = body["data"]["errors"].as_array().expect("errors array");
+        assert_eq!(errors.len(), crate::errors::ERROR_CATALOG.len());
+        for expected in crate::errors::ERROR_CATALOG {
+            let published = errors
+                .iter()
+                .find(|entry| entry["code"] == expected.code)
+                .unwrap_or_else(|| panic!("{} missing from endpoint", expected.code));
+            assert_eq!(
+                published["status"].as_u64(),
+                Some(u64::from(expected.status))
+            );
+            assert_eq!(published["retryable"].as_bool(), Some(expected.retryable));
+            assert!(
+                published["description"]
+                    .as_str()
+                    .is_some_and(|text| !text.is_empty()),
+                "{} has no description",
+                expected.code
+            );
+        }
     }
 
     #[test]

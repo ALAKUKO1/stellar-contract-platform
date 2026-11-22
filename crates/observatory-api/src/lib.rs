@@ -11,11 +11,13 @@
 
 pub mod api;
 pub mod dto;
+pub mod errors;
 pub mod http;
 pub mod metrics;
 pub mod openapi;
 
 pub use api::{Api, ApiError, API_PREFIX, METRICS_PATH, ROUTES};
 pub use dto::{CompatibilityRequest, DiffRequest, InspectRequest, WasmRequest};
+pub use errors::{entry as error_catalog_entry, ErrorCatalogEntry, ERROR_CATALOG};
 pub use http::{HttpLimits, Request, Response};
 pub use metrics::{Metrics, MetricsSnapshot};
