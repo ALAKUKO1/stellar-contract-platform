@@ -350,6 +350,26 @@ fn format_json_matches_the_json_flag() {
         .assert()
         .success()
         .stdout(predicate::str::contains("\"schema_version\""));
+    binary()
+        .args(["doctor", "--json"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("\"schema_version\""));
+}
+
+#[test]
+fn format_human_is_an_alias_for_text() {
+    binary()
+        .args(["doctor", "--format", "human"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("stellar-contract-platform"))
+        .stdout(predicate::str::contains("\"schema_version\"").not());
+    binary()
+        .args(["doctor", "--format", "text"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("stellar-contract-platform"));
 }
 
 #[test]
@@ -364,6 +384,12 @@ fn verbose_writes_diagnostics_to_stderr_and_quiet_suppresses_them() {
         .assert()
         .success()
         .stderr(predicate::str::is_empty());
+    binary()
+        .args(["doctor", "--verbose", "--quiet"])
+        .assert()
+        .success()
+        .stderr(predicate::str::is_empty())
+        .stdout(predicate::str::contains("stellar-contract-platform"));
 }
 
 fn instance_xdr(hash: [u8; 32]) -> String {
