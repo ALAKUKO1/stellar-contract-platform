@@ -111,6 +111,12 @@ pub struct RpcSection {
     /// Default endpoint URL.
     #[serde(default)]
     pub endpoint: Option<String>,
+    /// Connect timeout in seconds; defaults to 10.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub connect_timeout_secs: Option<u64>,
+    /// Read timeout in seconds; defaults to 30.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub read_timeout_secs: Option<u64>,
 }
 
 /// API/platform defaults.
@@ -296,6 +302,7 @@ impl ProjectConfig {
         if let Some(endpoint) = &self.rpc.endpoint {
             let _ = observatory_rpc::Endpoint::parse(endpoint)?;
         }
+        self.rpc_timeouts()?;
         self.ci.failure_statuses()?;
         for (name, profile) in &self.profiles {
             validate_profile_name(name)?;
@@ -360,6 +367,22 @@ impl ProjectConfig {
             Some(profile) if profile.endpoint.is_some() => Ok(profile.endpoint.as_deref()),
             _ => Ok(self.rpc.endpoint.as_deref()),
         }
+    }
+
+    /// Resolve RPC connect and read timeouts.
+    ///
+    /// Values are seconds; omitted values use the defaults in
+    /// [`observatory_rpc::RpcTimeouts`]. A configured zero is rejected at load
+    /// time rather than producing a transport that never connects.
+    pub fn rpc_timeouts(&self) -> Result<observatory_rpc::RpcTimeouts> {
+        observatory_rpc::RpcTimeouts::from_secs(
+            self.rpc
+                .connect_timeout_secs
+                .unwrap_or(observatory_rpc::DEFAULT_CONNECT_TIMEOUT.as_secs()),
+            self.rpc
+                .read_timeout_secs
+                .unwrap_or(observatory_rpc::DEFAULT_READ_TIMEOUT.as_secs()),
+        )
     }
 
     /// Resolve the CORS policy.
@@ -499,6 +522,36 @@ mod tests {
             config.ci.failure_statuses().unwrap(),
             ["ERROR", "MISMATCH"].map(str::to_string).into()
         );
+    }
+
+    #[test]
+    fn rpc_timeouts_default_and_parse() {
+        let config = ProjectConfig::parse("{}", ConfigFormat::Yaml).unwrap();
+        assert_eq!(
+            config.rpc_timeouts().unwrap(),
+            observatory_rpc::RpcTimeouts::default()
+        );
+
+        let config = ProjectConfig::parse(
+            "rpc:\n  connect_timeout_secs: 3\n  read_timeout_secs: 7\n",
+            ConfigFormat::Yaml,
+        )
+        .unwrap();
+        let timeouts = config.rpc_timeouts().unwrap();
+        assert_eq!(timeouts.connect, std::time::Duration::from_secs(3));
+        assert_eq!(timeouts.read, std::time::Duration::from_secs(7));
+    }
+
+    #[test]
+    fn rejects_zero_rpc_timeouts() {
+        for yaml in [
+            "rpc:\n  connect_timeout_secs: 0\n",
+            "rpc:\n  read_timeout_secs: 0\n",
+        ] {
+            let error = ProjectConfig::parse(yaml, ConfigFormat::Yaml).unwrap_err();
+            assert!(matches!(error, ObservatoryError::InvalidInput(_)), "{yaml}");
+            assert!(error.to_string().contains("timeout"), "{error}");
+        }
     }
 
     #[test]

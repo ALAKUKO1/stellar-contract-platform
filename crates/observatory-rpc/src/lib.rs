@@ -10,6 +10,7 @@
 
 use std::cell::RefCell;
 use std::collections::{BTreeMap, VecDeque};
+use std::time::Duration;
 
 use observatory_core::{ObservatoryError, Result};
 use serde::{Deserialize, Serialize};
@@ -30,6 +31,60 @@ pub use observatory_core::{RpcError, RpcErrorKind};
 pub trait Transport {
     /// Send a JSON-RPC request envelope and return the response envelope.
     fn send(&self, request: &Value) -> Result<Value>;
+}
+
+/// Default timeout for establishing a TCP/TLS connection.
+pub const DEFAULT_CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
+
+/// Default timeout for receiving response headers and the response body.
+pub const DEFAULT_READ_TIMEOUT: Duration = Duration::from_secs(30);
+
+/// Connect and read timeouts for an RPC transport.
+///
+/// A timeout is per request: the connect budget covers DNS, TCP, and TLS
+/// setup, and the read budget covers waiting for response headers and reading
+/// the body. Exceeding either budget fails the request with an
+/// [`ObservatoryError::Rpc`] error; it is never retried implicitly.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RpcTimeouts {
+    /// Maximum time to establish a connection.
+    pub connect: Duration,
+    /// Maximum time to wait for and read a response.
+    pub read: Duration,
+}
+
+impl Default for RpcTimeouts {
+    fn default() -> Self {
+        RpcTimeouts {
+            connect: DEFAULT_CONNECT_TIMEOUT,
+            read: DEFAULT_READ_TIMEOUT,
+        }
+    }
+}
+
+impl RpcTimeouts {
+    /// Build timeouts, rejecting zero values.
+    pub fn new(connect: Duration, read: Duration) -> Result<Self> {
+        if connect.is_zero() {
+            return Err(ObservatoryError::invalid(
+                "RPC connect timeout must be greater than zero",
+            ));
+        }
+        if read.is_zero() {
+            return Err(ObservatoryError::invalid(
+                "RPC read timeout must be greater than zero",
+            ));
+        }
+        Ok(RpcTimeouts { connect, read })
+    }
+
+    /// Build timeouts from whole seconds, rejecting zero values.
+    pub fn from_secs(connect_secs: u64, read_secs: u64) -> Result<Self> {
+        RpcTimeouts::new(
+            Duration::from_secs(connect_secs),
+            Duration::from_secs(read_secs),
+        )
+    }
 }
 
 impl<T: Transport + ?Sized> Transport for &T {
@@ -834,5 +889,15 @@ mod tests {
         let request = GetContractDataRequest::new(contract_id(), key);
         let error = client.get_contract_data(&request).unwrap_err();
         assert!(matches!(error, ObservatoryError::Decode(_)));
+    }
+
+    #[test]
+    fn rpc_timeouts_default_and_reject_zero() {
+        let defaults = RpcTimeouts::default();
+        assert_eq!(defaults.connect, DEFAULT_CONNECT_TIMEOUT);
+        assert_eq!(defaults.read, DEFAULT_READ_TIMEOUT);
+        assert!(RpcTimeouts::from_secs(1, 1).is_ok());
+        assert!(RpcTimeouts::from_secs(0, 1).is_err());
+        assert!(RpcTimeouts::from_secs(1, 0).is_err());
     }
 }
