@@ -84,6 +84,38 @@ the report cannot and does not claim source reproducibility.
 - `compared_keys` — the size of the union of keys,
 - `differences` — per-key `left`/`right` values (absent keys are `null`).
 
+## Dependency metadata
+
+`repro --dependencies [--reference <WASM>]` reports dependency entries recorded
+in `contractmetav0` under keys of the form `dep:<name>`. The value is the
+version string, kept verbatim; an empty value is reported as `null`.
+
+The `dep:` namespace is an Observatory convention, not an upstream Stellar
+standard. Keys outside it are never interpreted as dependencies; they remain in
+the raw `build_metadata` map and are reported verbatim by `repro`.
+
+When no `dep:` key is present, `dependencies` is `null` and the comparison
+state is `unavailable`. Absence is never reported as an empty dependency list.
+With `--reference`, the union of dependency names is compared; differences are
+sorted by name, so identical inputs always produce identical output. A
+comparison is `unavailable` unless both artifacts record dependency metadata.
+
+## Minimal SBOM
+
+`repro <WASM> --sbom` emits a minimal, honest SBOM document. It is **not** SPDX
+or CycloneDX; the format identifier is `observatory-sbom/1`.
+
+- `component.name` — the `name` metadata key, or `null`.
+- `component.version` — the `version` metadata key, or `null`.
+- `component.hashes` — SHA-256 of the artifact bytes, always present.
+- `dependencies` — `dep:<name>` entries, or `null` when none were recorded.
+- `unavailable` — field paths that could not be determined.
+
+The `name` and `version` keys are convenience fields, not an upstream Stellar
+standard; their absence is reported as `null` and listed in `unavailable`, never
+filled in. The SBOM never invents dependency data: entries come only from
+`dep:` keys, and `dependencies` is `null` when the artifact carries none.
+
 ## Concepts kept separate
 
 | Concept | Covered by |

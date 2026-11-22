@@ -97,6 +97,16 @@ states `source_reproduction: not_performed`; the tool never rebuilds from source
 and never claims source reproducibility. See
 [reproducibility.md](reproducibility.md).
 
+With `--dependencies`, reports `dep:<name>` entries from `contractmetav0` and,
+when a reference is supplied, a deterministic comparison of them. Missing
+dependency data is reported as `unavailable`, never as an empty list. See
+[reproducibility.md](reproducibility.md#dependency-metadata).
+
+With `--sbom`, emits a minimal `observatory-sbom/1` document with the component
+identity, SHA-256 artifact hash, and any `dep:` entries. Fields that cannot be
+determined are `null` and listed in `unavailable`; the command does not invent
+data. See [reproducibility.md](reproducibility.md#minimal-sbom).
+
 ### `doctor`
 
 Prints capabilities, schema version, networks, and the RPC transport status.

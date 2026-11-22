@@ -83,6 +83,12 @@ impl BuildMetadata {
     pub const TARGET_KEY: &'static str = "target";
     /// Build profile key (`profile`).
     pub const PROFILE_KEY: &'static str = "profile";
+    /// Dependency key prefix (`dep:<name>`).
+    pub const DEPENDENCY_PREFIX: &'static str = "dep:";
+    /// Component name key (`name`), read only by the minimal SBOM.
+    pub const NAME_KEY: &'static str = "name";
+    /// Component version key (`version`), read only by the minimal SBOM.
+    pub const VERSION_KEY: &'static str = "version";
 
     /// Look up a metadata value.
     #[must_use]
@@ -114,6 +120,33 @@ impl BuildMetadata {
         self.get(Self::PROFILE_KEY)
     }
 
+    /// Dependency entries recorded as `dep:<name>` keys, sorted by name.
+    ///
+    /// Returns `None` when no such key is present: absence of dependency data is
+    /// reported as unavailable, never as an empty dependency list. The `dep:`
+    /// namespace is an Observatory convention, not an upstream Stellar standard;
+    /// keys outside it are left in `entries` verbatim and are never interpreted
+    /// as dependencies.
+    #[must_use]
+    pub fn dependencies(&self) -> Option<Vec<DependencyEntry>> {
+        let mut dependencies: Vec<DependencyEntry> = self
+            .entries
+            .iter()
+            .filter_map(|(key, value)| {
+                let name = key.strip_prefix(Self::DEPENDENCY_PREFIX)?;
+                Some(DependencyEntry {
+                    name: name.to_string(),
+                    version: (!value.is_empty()).then(|| value.clone()),
+                })
+            })
+            .collect();
+        if dependencies.is_empty() {
+            return None;
+        }
+        dependencies.sort_by(|left, right| left.name.cmp(&right.name));
+        Some(dependencies)
+    }
+
     /// Parse a metadata document from JSON (`{ "key": "value", ... }`).
     pub fn from_json(value: &serde_json::Value) -> Result<Self> {
         let object = value
@@ -128,6 +161,60 @@ impl BuildMetadata {
         }
         Ok(BuildMetadata { entries })
     }
+}
+
+/// A dependency recorded in build metadata under a `dep:<name>` key.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct DependencyEntry {
+    /// Dependency name taken from the key, verbatim.
+    pub name: String,
+    /// Version string taken from the value, or `null` when the value was empty.
+    pub version: Option<String>,
+}
+
+/// The outcome of comparing dependency metadata across two artifacts.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DependencyComparisonState {
+    /// At least one artifact has no dependency metadata to compare.
+    Unavailable,
+    /// Both artifacts record identical dependency entries.
+    Match,
+    /// The recorded dependency entries differ.
+    Mismatch,
+}
+
+/// A single differing dependency entry.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct DependencyDifference {
+    /// Dependency name.
+    pub name: String,
+    /// Version on the left, if present.
+    pub left: Option<String>,
+    /// Version on the right, if present.
+    pub right: Option<String>,
+}
+
+/// The comparison of dependency metadata from two builds.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct DependencyComparison {
+    /// Comparison state.
+    pub state: DependencyComparisonState,
+    /// Number of dependencies compared (union of both name sets).
+    pub compared_dependencies: usize,
+    /// Differences, sorted by dependency name.
+    pub differences: Vec<DependencyDifference>,
+    /// Human-readable explanation.
+    pub detail: String,
+}
+
+/// Dependency metadata for an artifact and its comparison with a reference.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct DependencyReport {
+    /// `dep:` entries from the artifact, or `null` when none were recorded.
+    pub dependencies: Option<Vec<DependencyEntry>>,
+    /// Comparison with a reference artifact, if one was supplied.
+    pub comparison: DependencyComparison,
 }
 
 /// A single differing metadata key.
@@ -190,6 +277,92 @@ pub struct ReproducibilityReport {
     pub comparison: ReproducibilityComparison,
     /// Always `not_performed`; source is never rebuilt.
     pub source_reproduction: String,
+}
+
+/// The format identifier emitted by [`sbom`].
+///
+/// This is a minimal, honest document, not SPDX or CycloneDX.
+pub const SBOM_FORMAT: &str = "observatory-sbom/1";
+
+/// A hash of the SBOM component.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct SbomHash {
+    /// Hash algorithm name.
+    pub algorithm: String,
+    /// Hash value, lowercase hexadecimal.
+    pub value: String,
+}
+
+/// The component described by a minimal SBOM.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct SbomComponent {
+    /// Component name from the `name` metadata key, or `null` when absent.
+    pub name: Option<String>,
+    /// Component version from the `version` metadata key, or `null` when absent.
+    pub version: Option<String>,
+    /// Hashes computed from the artifact bytes.
+    pub hashes: Vec<SbomHash>,
+}
+
+/// A minimal software bill of materials for one artifact.
+///
+/// Every field is derived from the artifact bytes or from build metadata that
+/// the artifact actually carries. Fields that could not be determined are
+/// `null` and listed in [`Sbom::unavailable`]; nothing is inferred.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct Sbom {
+    /// Format identifier; see [`SBOM_FORMAT`].
+    pub format: String,
+    /// Component identity and hashes.
+    pub component: SbomComponent,
+    /// `dep:` entries, or `null` when none were recorded.
+    pub dependencies: Option<Vec<DependencyEntry>>,
+    /// Field paths that could not be determined from the artifact.
+    pub unavailable: Vec<String>,
+}
+
+/// Build a minimal SBOM from artifact bytes and embedded build metadata.
+///
+/// `component.name` and `component.version` use the `name` and `version`
+/// metadata keys when present. Those keys are not an upstream Stellar
+/// standard, so their absence is reported as `null` and in `unavailable`
+/// rather than guessed. Dependency data comes only from `dep:` keys.
+pub fn sbom(wasm: &[u8]) -> Result<Sbom> {
+    let metadata = parse_build_metadata(wasm)?;
+    let name = metadata
+        .as_ref()
+        .and_then(|metadata| metadata.get(BuildMetadata::NAME_KEY))
+        .map(str::to_string);
+    let version = metadata
+        .as_ref()
+        .and_then(|metadata| metadata.get(BuildMetadata::VERSION_KEY))
+        .map(str::to_string);
+    let dependencies = metadata.as_ref().and_then(BuildMetadata::dependencies);
+
+    let mut unavailable = Vec::new();
+    if name.is_none() {
+        unavailable.push("component.name".to_string());
+    }
+    if version.is_none() {
+        unavailable.push("component.version".to_string());
+    }
+    if dependencies.is_none() {
+        unavailable.push("dependencies".to_string());
+    }
+
+    Ok(Sbom {
+        format: SBOM_FORMAT.to_string(),
+        component: SbomComponent {
+            name,
+            version,
+            hashes: vec![SbomHash {
+                algorithm: "sha256".to_string(),
+                value: observatory_wasm::artifact_fingerprint(wasm),
+            }],
+        },
+        dependencies,
+        unavailable,
+    })
 }
 
 /// Build a reproducibility report from embedded metadata.
@@ -275,6 +448,103 @@ pub fn compare_build_metadata(left: &BuildMetadata, right: &BuildMetadata) -> Me
         compared_keys: keys.len(),
         differences,
     }
+}
+
+/// Compare dependency metadata from two builds.
+///
+/// Differences are sorted by dependency name. When either build records no
+/// dependency metadata, the result is [`DependencyComparisonState::Unavailable`]
+/// rather than an empty difference list, because absence cannot be compared.
+#[must_use]
+pub fn compare_dependencies(left: &BuildMetadata, right: &BuildMetadata) -> DependencyComparison {
+    let (Some(left), Some(right)) = (left.dependencies(), right.dependencies()) else {
+        return unavailable_dependency_comparison(
+            "dependency metadata is missing from one or both artifacts; dependency comparison was not performed",
+        );
+    };
+
+    let mut names: Vec<&str> = left
+        .iter()
+        .chain(right.iter())
+        .map(|dependency| dependency.name.as_str())
+        .collect();
+    names.sort_unstable();
+    names.dedup();
+
+    let mut differences = Vec::new();
+    for name in &names {
+        let l = dependency_version(&left, name);
+        let r = dependency_version(&right, name);
+        if l != r {
+            differences.push(DependencyDifference {
+                name: (*name).to_string(),
+                left: l,
+                right: r,
+            });
+        }
+    }
+
+    let state = if differences.is_empty() {
+        DependencyComparisonState::Match
+    } else {
+        DependencyComparisonState::Mismatch
+    };
+    DependencyComparison {
+        state,
+        compared_dependencies: names.len(),
+        differences,
+        detail: match state {
+            DependencyComparisonState::Match => {
+                "dependency metadata matches the reference artifact".to_string()
+            }
+            DependencyComparisonState::Mismatch => {
+                "dependency metadata differs from the reference artifact".to_string()
+            }
+            DependencyComparisonState::Unavailable => unreachable!(),
+        },
+    }
+}
+
+fn dependency_version(dependencies: &[DependencyEntry], name: &str) -> Option<String> {
+    dependencies
+        .iter()
+        .find(|dependency| dependency.name == name)
+        .and_then(|dependency| dependency.version.clone())
+}
+
+fn unavailable_dependency_comparison(detail: &str) -> DependencyComparison {
+    DependencyComparison {
+        state: DependencyComparisonState::Unavailable,
+        compared_dependencies: 0,
+        differences: Vec::new(),
+        detail: detail.to_string(),
+    }
+}
+
+/// Build a dependency report from embedded metadata.
+///
+/// When `reference` is supplied, both artifacts' `dep:` entries are compared.
+pub fn dependency_report(wasm: &[u8], reference: Option<&[u8]>) -> Result<DependencyReport> {
+    let metadata = parse_build_metadata(wasm)?;
+    let dependencies = metadata.as_ref().and_then(BuildMetadata::dependencies);
+    let comparison = match (metadata.as_ref(), reference) {
+        (_, None) => unavailable_dependency_comparison(
+            "no reference artifact supplied; dependency comparison was not performed",
+        ),
+        (None, Some(_)) => unavailable_dependency_comparison(
+            "this artifact has no build metadata; dependency comparison was not performed",
+        ),
+        (Some(left), Some(reference)) => match parse_build_metadata(reference)? {
+            Some(right) => compare_dependencies(left, &right),
+            None => unavailable_dependency_comparison(
+                "the reference artifact has no build metadata; dependency comparison was not performed",
+            ),
+        },
+    };
+    Ok(DependencyReport {
+        dependencies,
+        comparison,
+    })
 }
 
 /// Parse `contractenvmetav0` from a WASM artifact, if present.
@@ -576,18 +846,16 @@ mod tests {
     }
 
     fn module_with_build_meta() -> Vec<u8> {
-        let entries = vec![
-            ScMetaEntry::ScMetaV0(ScMetaV0 {
-                key: "rsver".try_into().unwrap(),
-                val: "1.85.0".try_into().unwrap(),
-            }),
-            ScMetaEntry::ScMetaV0(ScMetaV0 {
-                key: "rssdkver".try_into().unwrap(),
-                val: "22.0.0".try_into().unwrap(),
-            }),
-        ];
+        module_with_meta_entries(&[("rsver", "1.85.0"), ("rssdkver", "22.0.0")])
+    }
+
+    fn module_with_meta_entries(entries: &[(&str, &str)]) -> Vec<u8> {
         let mut payload = Vec::new();
-        for entry in entries {
+        for (key, value) in entries {
+            let entry = ScMetaEntry::ScMetaV0(ScMetaV0 {
+                key: (*key).try_into().unwrap(),
+                val: (*value).try_into().unwrap(),
+            });
             payload.extend(entry.to_xdr(Limits::none()).unwrap());
         }
         let mut module = minimal_module();
@@ -661,6 +929,86 @@ mod tests {
         assert!(same.differences.is_empty());
     }
 
+    #[test]
+    fn parses_dependency_entries_and_preserves_other_keys() {
+        let metadata = BuildMetadata::from_json(&json!({
+            "dep:serde": "1.0.200",
+            "dep:soroban-sdk": "22.0.0#abc123",
+            "dep:empty": "",
+            "rsver": "1.85.0",
+            "custom": "kept"
+        }))
+        .unwrap();
+
+        let dependencies = metadata.dependencies().unwrap();
+        assert_eq!(
+            dependencies
+                .iter()
+                .map(|dependency| dependency.name.as_str())
+                .collect::<Vec<_>>(),
+            vec!["empty", "serde", "soroban-sdk"]
+        );
+        assert_eq!(dependencies[0].version, None);
+        assert_eq!(dependencies[1].version.as_deref(), Some("1.0.200"));
+        assert_eq!(dependencies[2].version.as_deref(), Some("22.0.0#abc123"));
+        assert_eq!(metadata.get("rsver"), Some("1.85.0"));
+        assert_eq!(metadata.get("custom"), Some("kept"));
+
+        let without = BuildMetadata::from_json(&json!({ "rsver": "1.85.0" })).unwrap();
+        assert!(without.dependencies().is_none());
+    }
+
+    #[test]
+    fn compares_dependencies_deterministically() {
+        let left = BuildMetadata::from_json(&json!({
+            "dep:zeta": "1",
+            "dep:alpha": "1",
+            "dep:beta": "1"
+        }))
+        .unwrap();
+        let right = BuildMetadata::from_json(&json!({
+            "dep:zeta": "2",
+            "dep:alpha": "1",
+            "dep:beta": "2"
+        }))
+        .unwrap();
+
+        let comparison = compare_dependencies(&left, &right);
+        assert_eq!(comparison.state, DependencyComparisonState::Mismatch);
+        assert_eq!(comparison.compared_dependencies, 3);
+        assert_eq!(
+            comparison
+                .differences
+                .iter()
+                .map(|difference| difference.name.as_str())
+                .collect::<Vec<_>>(),
+            vec!["beta", "zeta"]
+        );
+        assert_eq!(comparison, compare_dependencies(&left, &right));
+
+        let same = compare_dependencies(&left, &left);
+        assert_eq!(same.state, DependencyComparisonState::Match);
+        assert!(same.differences.is_empty());
+    }
+
+    #[test]
+    fn dependency_comparison_is_unavailable_without_data() {
+        let with = BuildMetadata::from_json(&json!({ "dep:serde": "1.0.200" })).unwrap();
+        let without = BuildMetadata::from_json(&json!({ "rsver": "1.85.0" })).unwrap();
+
+        let comparison = compare_dependencies(&with, &without);
+        assert_eq!(comparison.state, DependencyComparisonState::Unavailable);
+        assert_eq!(comparison.compared_dependencies, 0);
+        assert!(comparison.differences.is_empty());
+
+        let report = dependency_report(&minimal_module(), None).unwrap();
+        assert!(report.dependencies.is_none());
+        assert_eq!(
+            report.comparison.state,
+            DependencyComparisonState::Unavailable
+        );
+    }
+
     fn module_with_all_metadata() -> Vec<u8> {
         let mut module = module_with_build_meta();
         module.extend(
@@ -711,6 +1059,61 @@ mod tests {
             MetadataComparisonState::Mismatch
         );
         assert_eq!(differing.comparison.env_meta_equal, Some(false));
+    }
+
+    #[test]
+    fn sbom_reports_identity_hashes_and_dependencies() {
+        let wasm = module_with_meta_entries(&[
+            ("name", "example-contract"),
+            ("version", "1.2.3"),
+            ("dep:soroban-sdk", "22.0.0"),
+            ("custom", "kept"),
+        ]);
+        let sbom = sbom(&wasm).unwrap();
+        assert_eq!(sbom.format, SBOM_FORMAT);
+        assert_eq!(sbom.component.name.as_deref(), Some("example-contract"));
+        assert_eq!(sbom.component.version.as_deref(), Some("1.2.3"));
+        assert_eq!(
+            sbom.component.hashes,
+            vec![SbomHash {
+                algorithm: "sha256".to_string(),
+                value: observatory_wasm::artifact_fingerprint(&wasm),
+            }]
+        );
+        assert_eq!(
+            sbom.dependencies
+                .as_ref()
+                .map(|dependencies| dependencies[0].name.as_str()),
+            Some("soroban-sdk")
+        );
+        assert!(sbom.unavailable.is_empty());
+
+        let json = serde_json::to_string(&sbom).unwrap();
+        let value: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(value["component"]["hashes"][0]["algorithm"], "sha256");
+        assert_eq!(
+            value["component"]["hashes"][0]["value"],
+            observatory_wasm::artifact_fingerprint(&wasm)
+        );
+    }
+
+    #[test]
+    fn sbom_marks_absent_data_as_unavailable() {
+        let wasm = minimal_module();
+        let sbom = sbom(&wasm).unwrap();
+        assert_eq!(sbom.component.name, None);
+        assert_eq!(sbom.component.version, None);
+        assert_eq!(sbom.dependencies, None);
+        assert_eq!(
+            sbom.unavailable,
+            vec!["component.name", "component.version", "dependencies"]
+        );
+
+        let json = serde_json::to_string(&sbom).unwrap();
+        let value: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert!(value["component"]["name"].is_null());
+        assert!(value["dependencies"].is_null());
+        assert_eq!(value["format"], SBOM_FORMAT);
     }
 
     fn deployed_transport(hash_byte: u8) -> MockTransport {
