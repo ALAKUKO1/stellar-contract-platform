@@ -10,8 +10,7 @@ use observatory_core::{ObservatoryError, Result};
 use serde_json::Value;
 
 use crate::{
-    Endpoint, RpcTimeouts, SsrfPolicy, Transport, DEFAULT_MAX_RESPONSE_BYTES,
-    DEFAULT_READ_TIMEOUT,
+    Endpoint, RpcTimeouts, SsrfPolicy, Transport, DEFAULT_MAX_RESPONSE_BYTES, DEFAULT_READ_TIMEOUT,
 };
 
 /// Default per-request timeout, retained for compatibility.

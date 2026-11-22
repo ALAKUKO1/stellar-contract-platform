@@ -41,7 +41,7 @@ pub enum Severity {
 }
 
 /// The kind of a change.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ChangeKind {
     /// A function was added.
@@ -109,22 +109,22 @@ pub struct Change {
 }
 
 /// Aggregate counts of a diff.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+///
+/// [`Self::by_kind`] only contains kinds that occurred, keyed in the stable
+/// [`ChangeKind`] declaration order. An absent key means zero, which keeps the
+/// summary compact for CI gates.
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub struct DiffSummary {
+    /// Total number of changes.
+    pub total: usize,
     /// Breaking change count.
     pub breaking: usize,
     /// Non-breaking change count.
     pub non_breaking: usize,
     /// Informational change count.
     pub informational: usize,
-}
-
-impl DiffSummary {
-    /// Total number of changes.
-    #[must_use]
-    pub fn total(&self) -> usize {
-        self.breaking + self.non_breaking + self.informational
-    }
+    /// Change count per kind.
+    pub by_kind: std::collections::BTreeMap<ChangeKind, usize>,
 }
 
 /// The result of diffing two interfaces.
@@ -162,11 +162,13 @@ pub fn diff(old: &ContractInterface, new: &ContractInterface) -> InterfaceDiff {
 
     let mut summary = DiffSummary::default();
     for change in &changes {
+        summary.total += 1;
         match change.severity {
             Severity::Breaking => summary.breaking += 1,
             Severity::NonBreaking => summary.non_breaking += 1,
             Severity::Informational => summary.informational += 1,
         }
+        *summary.by_kind.entry(change.kind).or_insert(0) += 1;
     }
     InterfaceDiff { changes, summary }
 }
@@ -883,7 +885,75 @@ mod tests {
         let entries = vec![spec_function("a", &[], None), spec_struct("S", &[])];
         let result = diff(&interface(entries.clone()), &interface(entries));
         assert!(result.changes.is_empty());
-        assert_eq!(result.summary.total(), 0);
+        assert_eq!(result.summary.total, 0);
+        assert!(result.summary.by_kind.is_empty());
+    }
+
+    #[test]
+    fn summary_counts_match_the_change_list() {
+        let old = interface(vec![
+            spec_function("gone", &[("x", ScSpecTypeDef::U32)], None),
+            spec_function("kept", &[("x", ScSpecTypeDef::U32)], None),
+            spec_struct("Old", &[("a", ScSpecTypeDef::U32)]),
+            spec_event("evt", &["transfer"], &[]),
+        ]);
+        let new = interface(vec![
+            spec_function("kept", &[("x", ScSpecTypeDef::U64)], None),
+            spec_function("fresh", &[], None),
+            spec_struct("New", &[("a", ScSpecTypeDef::U32)]),
+            spec_event("evt", &["transfer"], &[]),
+        ]);
+        let result = diff(&old, &new);
+
+        assert_eq!(result.summary.total, result.changes.len());
+        assert_eq!(
+            result.summary.breaking,
+            result
+                .changes
+                .iter()
+                .filter(|change| change.severity == Severity::Breaking)
+                .count()
+        );
+        assert_eq!(
+            result.summary.non_breaking,
+            result
+                .changes
+                .iter()
+                .filter(|change| change.severity == Severity::NonBreaking)
+                .count()
+        );
+        assert_eq!(
+            result.summary.informational,
+            result
+                .changes
+                .iter()
+                .filter(|change| change.severity == Severity::Informational)
+                .count()
+        );
+        for kind in result.summary.by_kind.values() {
+            assert!(*kind > 0);
+        }
+        assert_eq!(
+            result.summary.by_kind.values().sum::<usize>(),
+            result.changes.len()
+        );
+        for change in &result.changes {
+            assert!(
+                result
+                    .summary
+                    .by_kind
+                    .get(&change.kind)
+                    .copied()
+                    .unwrap_or(0)
+                    > 0,
+                "kind {:?} is missing from the summary",
+                change.kind
+            );
+        }
+
+        let first = serde_json::to_string(&result).unwrap();
+        let second = serde_json::to_string(&diff(&old, &new)).unwrap();
+        assert_eq!(first, second);
     }
 
     #[test]

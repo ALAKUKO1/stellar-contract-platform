@@ -245,9 +245,12 @@ export interface Change {
 }
 
 export interface DiffSummary {
+  total: number;
   breaking: number;
   non_breaking: number;
   informational: number;
+  /** Counts per change kind; an absent kind is zero. */
+  by_kind: Partial<Record<string, number>>;
 }
 
 export interface InterfaceDiff {
