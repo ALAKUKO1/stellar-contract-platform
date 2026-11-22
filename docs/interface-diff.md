@@ -43,6 +43,37 @@ including `old`/`new` renderings for signature and type changes.
 suitable for pull requests and reports. Identical inputs produce identical
 Markdown.
 
+## Machine summary
+
+JSON output carries a `summary` object suitable for CI gates:
+
+```json
+{
+  "total": 3,
+  "breaking": 2,
+  "non_breaking": 1,
+  "informational": 0,
+  "by_kind": {
+    "function_removed": 1,
+    "function_changed": 1,
+    "event_added": 1
+  }
+}
+```
+
+`total` equals `changes.len()`, and the severity counts always add up to
+`total`. `by_kind` is keyed in the stable `ChangeKind` declaration order
+(functions, types, events; each in the enum's order) and lists only kinds that
+occurred; an absent key means zero. The object is emitted by serde and is
+byte-stable for identical inputs. The schema is
+[`docs/schemas/diff.schema.json`](schemas/diff.schema.json).
+
+For example, a gate that fails on breaking changes:
+
+```sh
+observatory diff old.json new.json --format json | jq -e '.data.summary.breaking == 0'
+```
+
 ## Rename detection
 
 A rename is reported as a single `function_renamed` change only when it is

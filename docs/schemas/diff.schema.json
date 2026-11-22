@@ -19,11 +19,31 @@
         "summary": {
           "type": "object",
           "additionalProperties": false,
-          "required": ["breaking", "non_breaking", "informational"],
+          "required": ["total", "breaking", "non_breaking", "informational", "by_kind"],
           "properties": {
+            "total": { "type": "integer", "minimum": 0 },
             "breaking": { "type": "integer", "minimum": 0 },
             "non_breaking": { "type": "integer", "minimum": 0 },
-            "informational": { "type": "integer", "minimum": 0 }
+            "informational": { "type": "integer", "minimum": 0 },
+            "by_kind": {
+              "type": "object",
+              "description": "Counts per change kind. Absent kinds are zero; keys follow the ChangeKind declaration order.",
+              "additionalProperties": false,
+              "properties": {
+                "function_added": { "type": "integer", "minimum": 1 },
+                "function_removed": { "type": "integer", "minimum": 1 },
+                "function_changed": { "type": "integer", "minimum": 1 },
+                "function_renamed": { "type": "integer", "minimum": 1 },
+                "type_added": { "type": "integer", "minimum": 1 },
+                "type_removed": { "type": "integer", "minimum": 1 },
+                "type_changed": { "type": "integer", "minimum": 1 },
+                "type_renamed": { "type": "integer", "minimum": 1 },
+                "event_added": { "type": "integer", "minimum": 1 },
+                "event_removed": { "type": "integer", "minimum": 1 },
+                "event_changed": { "type": "integer", "minimum": 1 },
+                "event_renamed": { "type": "integer", "minimum": 1 }
+              }
+            }
           }
         }
       }

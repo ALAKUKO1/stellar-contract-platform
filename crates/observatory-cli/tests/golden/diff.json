@@ -12,8 +12,12 @@
     ],
     "summary": {
       "breaking": 1,
+      "by_kind": {
+        "function_removed": 1
+      },
       "informational": 0,
-      "non_breaking": 0
+      "non_breaking": 0,
+      "total": 1
     }
   },
   "kind": "diff",

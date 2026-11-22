@@ -219,7 +219,13 @@ mod tests {
                 "diff",
                 serde_json::json!({
                     "changes": [],
-                    "summary": { "breaking": 0, "non_breaking": 0, "informational": 0 },
+                    "summary": {
+                        "total": 0,
+                        "breaking": 0,
+                        "non_breaking": 0,
+                        "informational": 0,
+                        "by_kind": {},
+                    },
                 }),
             ),
             (
