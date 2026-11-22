@@ -161,6 +161,130 @@ pub fn spec_event(
     })
 }
 
+/// A `ScSpecEntry::FunctionV0` with a documentation string and the given inputs.
+#[must_use]
+pub fn spec_function_with_doc(
+    name: &str,
+    doc: &str,
+    inputs: &[(&str, ScSpecTypeDef)],
+    output: Option<ScSpecTypeDef>,
+) -> ScSpecEntry {
+    let inputs = inputs
+        .iter()
+        .map(|(name, ty)| ScSpecFunctionInputV0 {
+            doc: Default::default(),
+            name: sm(name),
+            type_: ty.clone(),
+        })
+        .collect();
+    let outputs = output.into_iter().collect();
+    ScSpecEntry::FunctionV0(ScSpecFunctionV0 {
+        doc: sm::<1024>(doc),
+        name: sym(name),
+        inputs: vecm(inputs),
+        outputs: vecm(outputs),
+    })
+}
+
+/// A `ScSpecEntry::UdtStructV0` with a type doc and per-field docs.
+///
+/// Each field is `(name, doc, type)`.
+#[must_use]
+pub fn spec_struct_with_doc(
+    name: &str,
+    doc: &str,
+    fields: &[(&str, &str, ScSpecTypeDef)],
+) -> ScSpecEntry {
+    let fields = fields
+        .iter()
+        .map(|(name, field_doc, ty)| ScSpecUdtStructFieldV0 {
+            doc: sm::<1024>(field_doc),
+            name: sm(name),
+            type_: ty.clone(),
+        })
+        .collect();
+    ScSpecEntry::UdtStructV0(ScSpecUdtStructV0 {
+        doc: sm::<1024>(doc),
+        lib: Default::default(),
+        name: sm(name),
+        fields: vecm(fields),
+    })
+}
+
+/// A `ScSpecEntry::UdtUnionV0` with a type doc and per-case docs.
+///
+/// Each case is `(name, doc, types)`; `Some(types)` is a tuple case and `None`
+/// a void case.
+#[must_use]
+pub fn spec_union_with_doc(
+    name: &str,
+    doc: &str,
+    cases: &[(&str, &str, Option<Vec<ScSpecTypeDef>>)],
+) -> ScSpecEntry {
+    let cases = cases
+        .iter()
+        .map(|(name, case_doc, types)| match types {
+            Some(types) => ScSpecUdtUnionCaseV0::TupleV0(ScSpecUdtUnionCaseTupleV0 {
+                doc: sm::<1024>(case_doc),
+                name: sm(name),
+                type_: vecm(types.clone()),
+            }),
+            None => ScSpecUdtUnionCaseV0::VoidV0(ScSpecUdtUnionCaseVoidV0 {
+                doc: sm::<1024>(case_doc),
+                name: sm(name),
+            }),
+        })
+        .collect();
+    ScSpecEntry::UdtUnionV0(ScSpecUdtUnionV0 {
+        doc: sm::<1024>(doc),
+        lib: Default::default(),
+        name: sm(name),
+        cases: vecm(cases),
+    })
+}
+
+/// A `ScSpecEntry::UdtEnumV0` with a type doc and per-case docs.
+///
+/// Each case is `(name, doc, value)`.
+#[must_use]
+pub fn spec_enum_with_doc(name: &str, doc: &str, cases: &[(&str, &str, u32)]) -> ScSpecEntry {
+    let cases = cases
+        .iter()
+        .map(|(name, case_doc, value)| ScSpecUdtEnumCaseV0 {
+            doc: sm::<1024>(case_doc),
+            name: sm(name),
+            value: *value,
+        })
+        .collect();
+    ScSpecEntry::UdtEnumV0(ScSpecUdtEnumV0 {
+        doc: sm::<1024>(doc),
+        lib: Default::default(),
+        name: sm(name),
+        cases: vecm(cases),
+    })
+}
+
+/// A `ScSpecEntry::UdtErrorEnumV0` with a type doc and per-case docs.
+///
+/// Each case is `(name, doc, value)`.
+#[must_use]
+pub fn spec_error_enum_with_doc(name: &str, doc: &str, cases: &[(&str, &str, u32)]) -> ScSpecEntry {
+    let cases = cases
+        .iter()
+        .map(|(name, case_doc, value)| ScSpecUdtErrorEnumCaseV0 {
+            doc: sm::<1024>(case_doc),
+            name: sm(name),
+            value: *value,
+        })
+        .collect();
+    ScSpecEntry::UdtErrorEnumV0(ScSpecUdtErrorEnumV0 {
+        doc: sm::<1024>(doc),
+        lib: Default::default(),
+        name: sm(name),
+        cases: vecm(cases),
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

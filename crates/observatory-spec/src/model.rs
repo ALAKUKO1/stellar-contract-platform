@@ -196,6 +196,12 @@ pub struct SpecUnion {
 pub struct SpecEnumCase {
     /// Case name.
     pub name: String,
+    /// Documentation string.
+    ///
+    /// Empty documentation is omitted from JSON so existing canonical output
+    /// and interface fingerprints are unchanged for undocumented cases.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub doc: String,
     /// Numeric value.
     pub value: u32,
 }

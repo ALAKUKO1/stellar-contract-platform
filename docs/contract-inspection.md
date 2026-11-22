@@ -42,6 +42,9 @@
 - A 64-bit linear memory (`memory64` proposal) is reported rather than rejected.
   Soroban contracts target 32-bit linear memory, so `inspect --security` warns
   on `artifact.memory64`.
+- WebAssembly **component-model** binaries are out of scope. Their preamble is
+  detected and rejected with an `unsupported` error naming components, rather
+  than a confusing parse failure. Only core WASM modules are inspected.
 
 ## Ordering
 

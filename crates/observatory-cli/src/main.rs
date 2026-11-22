@@ -400,7 +400,7 @@ fn run(cli: &Cli, format: OutputFormat) -> Result<ObservatoryExit> {
                 if empty {
                     return Err(ObservatoryError::invalid(format!("no type named `{name}`")));
                 }
-                emit(format, "spec.type", &payload, || print_type(&payload))?;
+                emit(format, "spec.type", &payload, || print_type(&spec, name))?;
                 return Ok(ObservatoryExit::Success);
             }
             let payload = serde_json::json!({ "spec": &spec, "summary": &summary });
@@ -825,6 +825,45 @@ fn render_params(params: &[observatory_spec::SpecParam]) -> String {
         .join(", ")
 }
 
+/// Expand the escape sequences that `StringM` uses in its `Display` output.
+///
+/// Documents are decoded from XDR into the model via `Display`, which escapes
+/// newlines and other control bytes. Human output should show the real text.
+fn unescape_doc(doc: &str) -> String {
+    let mut out = String::with_capacity(doc.len());
+    let mut chars = doc.chars();
+    while let Some(ch) = chars.next() {
+        if ch != '\\' {
+            out.push(ch);
+            continue;
+        }
+        match chars.next() {
+            Some('n') => out.push('\n'),
+            Some('r') => out.push('\r'),
+            Some('t') => out.push('\t'),
+            Some('\\') => out.push('\\'),
+            Some(other) => {
+                out.push('\\');
+                out.push(other);
+            }
+            None => out.push('\\'),
+        }
+    }
+    out
+}
+
+/// Print a documentation string, indented, omitting an empty doc entirely.
+fn print_doc(doc: &str, indent: &str) {
+    let doc = unescape_doc(doc);
+    let doc = doc.trim();
+    if doc.is_empty() {
+        return;
+    }
+    for line in doc.lines() {
+        println!("{indent}{}", line.trim_end());
+    }
+}
+
 fn print_inspect(payload: &serde_json::Value) {
     let wasm = &payload["wasm"];
     println!(
@@ -888,14 +927,69 @@ fn print_spec(spec: &observatory_spec::ContractSpec, summary: &observatory_spec:
                 .map(ToString::to_string)
                 .unwrap_or_else(|| "()".to_string())
         );
+        print_doc(&function.doc, "      ");
+    }
+    for item in &spec.structs {
+        println!("  struct {}", item.name);
+        print_doc(&item.doc, "      ");
+    }
+    for item in &spec.unions {
+        println!("  union {}", item.name);
+        print_doc(&item.doc, "      ");
+    }
+    for item in &spec.enums {
+        println!("  enum {}", item.name);
+        print_doc(&item.doc, "      ");
+    }
+    for item in &spec.error_enums {
+        println!("  error enum {}", item.name);
+        print_doc(&item.doc, "      ");
     }
 }
 
-fn print_type(payload: &serde_json::Value) {
-    println!(
-        "{}",
-        serde_json::to_string_pretty(payload).unwrap_or_default()
-    );
+fn print_type(spec: &observatory_spec::ContractSpec, name: &str) {
+    for item in spec.structs.iter().filter(|item| item.name == name) {
+        println!("struct {}", item.name);
+        print_doc(&item.doc, "  ");
+        for field in &item.fields {
+            println!("  field {}: {}", field.name, field.ty);
+            print_doc(&field.doc, "    ");
+        }
+    }
+    for item in spec.unions.iter().filter(|item| item.name == name) {
+        println!("union {}", item.name);
+        print_doc(&item.doc, "  ");
+        for case in &item.cases {
+            if case.types.is_empty() {
+                println!("  case {}", case.name);
+            } else {
+                let types = case
+                    .types
+                    .iter()
+                    .map(ToString::to_string)
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                println!("  case {}({types})", case.name);
+            }
+            print_doc(&case.doc, "    ");
+        }
+    }
+    for item in spec.enums.iter().filter(|item| item.name == name) {
+        println!("enum {}", item.name);
+        print_doc(&item.doc, "  ");
+        for case in &item.cases {
+            println!("  case {} = {}", case.name, case.value);
+            print_doc(&case.doc, "    ");
+        }
+    }
+    for item in spec.error_enums.iter().filter(|item| item.name == name) {
+        println!("error enum {}", item.name);
+        print_doc(&item.doc, "  ");
+        for case in &item.cases {
+            println!("  case {} = {}", case.name, case.value);
+            print_doc(&case.doc, "    ");
+        }
+    }
 }
 
 fn print_events(payload: &serde_json::Value) {
