@@ -320,6 +320,22 @@ mod tests {
                 }),
             ),
             (
+                "repro.sbom",
+                serde_json::json!({
+                    "format": "observatory-sbom/1",
+                    "component": {
+                        "name": "example-contract",
+                        "version": null,
+                        "hashes": [{
+                            "algorithm": "sha256",
+                            "value": "0000000000000000000000000000000000000000000000000000000000000000",
+                        }],
+                    },
+                    "dependencies": null,
+                    "unavailable": ["component.version", "dependencies"],
+                }),
+            ),
+            (
                 "doctor",
                 serde_json::json!({
                     "tool": TOOL_NAME,

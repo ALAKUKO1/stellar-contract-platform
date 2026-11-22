@@ -824,6 +824,34 @@ fn repro_reports_metadata_without_claiming_source_reproduction() {
 }
 
 #[test]
+fn repro_sbom_is_valid_json_and_marks_absent_data() {
+    let wasm = metadata_module();
+    let file = write_temp(&wasm, ".wasm");
+    let path = file.path().to_str().unwrap();
+    let output = binary()
+        .args(["repro", path, "--sbom", "--json"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("\"kind\": \"repro.sbom\""))
+        .stdout(predicate::str::contains(
+            "\"format\": \"observatory-sbom/1\"",
+        ))
+        .stdout(predicate::str::contains("\"algorithm\": \"sha256\""))
+        .stdout(predicate::str::contains("\"dependencies\""))
+        .get_output()
+        .stdout
+        .clone();
+    let document: serde_json::Value = serde_json::from_slice(&output).unwrap();
+    assert!(document["data"]["component"]["name"].is_null());
+    assert_eq!(document["data"]["dependencies"][0]["name"], "serde");
+    assert!(document["data"]["component"]["version"].is_null());
+    assert_eq!(
+        document["data"]["unavailable"],
+        serde_json::json!(["component.name", "component.version"])
+    );
+}
+
+#[test]
 fn diff_markdown_renders_severity_sections() {
     let old = write_temp(
         &module_with_spec(&[spec_function("a", &[], None), spec_function("b", &[], None)]),

@@ -85,6 +85,10 @@ impl BuildMetadata {
     pub const PROFILE_KEY: &'static str = "profile";
     /// Dependency key prefix (`dep:<name>`).
     pub const DEPENDENCY_PREFIX: &'static str = "dep:";
+    /// Component name key (`name`), read only by the minimal SBOM.
+    pub const NAME_KEY: &'static str = "name";
+    /// Component version key (`version`), read only by the minimal SBOM.
+    pub const VERSION_KEY: &'static str = "version";
 
     /// Look up a metadata value.
     #[must_use]
@@ -273,6 +277,92 @@ pub struct ReproducibilityReport {
     pub comparison: ReproducibilityComparison,
     /// Always `not_performed`; source is never rebuilt.
     pub source_reproduction: String,
+}
+
+/// The format identifier emitted by [`sbom`].
+///
+/// This is a minimal, honest document, not SPDX or CycloneDX.
+pub const SBOM_FORMAT: &str = "observatory-sbom/1";
+
+/// A hash of the SBOM component.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct SbomHash {
+    /// Hash algorithm name.
+    pub algorithm: String,
+    /// Hash value, lowercase hexadecimal.
+    pub value: String,
+}
+
+/// The component described by a minimal SBOM.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct SbomComponent {
+    /// Component name from the `name` metadata key, or `null` when absent.
+    pub name: Option<String>,
+    /// Component version from the `version` metadata key, or `null` when absent.
+    pub version: Option<String>,
+    /// Hashes computed from the artifact bytes.
+    pub hashes: Vec<SbomHash>,
+}
+
+/// A minimal software bill of materials for one artifact.
+///
+/// Every field is derived from the artifact bytes or from build metadata that
+/// the artifact actually carries. Fields that could not be determined are
+/// `null` and listed in [`Sbom::unavailable`]; nothing is inferred.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct Sbom {
+    /// Format identifier; see [`SBOM_FORMAT`].
+    pub format: String,
+    /// Component identity and hashes.
+    pub component: SbomComponent,
+    /// `dep:` entries, or `null` when none were recorded.
+    pub dependencies: Option<Vec<DependencyEntry>>,
+    /// Field paths that could not be determined from the artifact.
+    pub unavailable: Vec<String>,
+}
+
+/// Build a minimal SBOM from artifact bytes and embedded build metadata.
+///
+/// `component.name` and `component.version` use the `name` and `version`
+/// metadata keys when present. Those keys are not an upstream Stellar
+/// standard, so their absence is reported as `null` and in `unavailable`
+/// rather than guessed. Dependency data comes only from `dep:` keys.
+pub fn sbom(wasm: &[u8]) -> Result<Sbom> {
+    let metadata = parse_build_metadata(wasm)?;
+    let name = metadata
+        .as_ref()
+        .and_then(|metadata| metadata.get(BuildMetadata::NAME_KEY))
+        .map(str::to_string);
+    let version = metadata
+        .as_ref()
+        .and_then(|metadata| metadata.get(BuildMetadata::VERSION_KEY))
+        .map(str::to_string);
+    let dependencies = metadata.as_ref().and_then(BuildMetadata::dependencies);
+
+    let mut unavailable = Vec::new();
+    if name.is_none() {
+        unavailable.push("component.name".to_string());
+    }
+    if version.is_none() {
+        unavailable.push("component.version".to_string());
+    }
+    if dependencies.is_none() {
+        unavailable.push("dependencies".to_string());
+    }
+
+    Ok(Sbom {
+        format: SBOM_FORMAT.to_string(),
+        component: SbomComponent {
+            name,
+            version,
+            hashes: vec![SbomHash {
+                algorithm: "sha256".to_string(),
+                value: observatory_wasm::artifact_fingerprint(wasm),
+            }],
+        },
+        dependencies,
+        unavailable,
+    })
 }
 
 /// Build a reproducibility report from embedded metadata.
@@ -756,18 +846,16 @@ mod tests {
     }
 
     fn module_with_build_meta() -> Vec<u8> {
-        let entries = vec![
-            ScMetaEntry::ScMetaV0(ScMetaV0 {
-                key: "rsver".try_into().unwrap(),
-                val: "1.85.0".try_into().unwrap(),
-            }),
-            ScMetaEntry::ScMetaV0(ScMetaV0 {
-                key: "rssdkver".try_into().unwrap(),
-                val: "22.0.0".try_into().unwrap(),
-            }),
-        ];
+        module_with_meta_entries(&[("rsver", "1.85.0"), ("rssdkver", "22.0.0")])
+    }
+
+    fn module_with_meta_entries(entries: &[(&str, &str)]) -> Vec<u8> {
         let mut payload = Vec::new();
-        for entry in entries {
+        for (key, value) in entries {
+            let entry = ScMetaEntry::ScMetaV0(ScMetaV0 {
+                key: (*key).try_into().unwrap(),
+                val: (*value).try_into().unwrap(),
+            });
             payload.extend(entry.to_xdr(Limits::none()).unwrap());
         }
         let mut module = minimal_module();
@@ -971,6 +1059,61 @@ mod tests {
             MetadataComparisonState::Mismatch
         );
         assert_eq!(differing.comparison.env_meta_equal, Some(false));
+    }
+
+    #[test]
+    fn sbom_reports_identity_hashes_and_dependencies() {
+        let wasm = module_with_meta_entries(&[
+            ("name", "example-contract"),
+            ("version", "1.2.3"),
+            ("dep:soroban-sdk", "22.0.0"),
+            ("custom", "kept"),
+        ]);
+        let sbom = sbom(&wasm).unwrap();
+        assert_eq!(sbom.format, SBOM_FORMAT);
+        assert_eq!(sbom.component.name.as_deref(), Some("example-contract"));
+        assert_eq!(sbom.component.version.as_deref(), Some("1.2.3"));
+        assert_eq!(
+            sbom.component.hashes,
+            vec![SbomHash {
+                algorithm: "sha256".to_string(),
+                value: observatory_wasm::artifact_fingerprint(&wasm),
+            }]
+        );
+        assert_eq!(
+            sbom.dependencies
+                .as_ref()
+                .map(|dependencies| dependencies[0].name.as_str()),
+            Some("soroban-sdk")
+        );
+        assert!(sbom.unavailable.is_empty());
+
+        let json = serde_json::to_string(&sbom).unwrap();
+        let value: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(value["component"]["hashes"][0]["algorithm"], "sha256");
+        assert_eq!(
+            value["component"]["hashes"][0]["value"],
+            observatory_wasm::artifact_fingerprint(&wasm)
+        );
+    }
+
+    #[test]
+    fn sbom_marks_absent_data_as_unavailable() {
+        let wasm = minimal_module();
+        let sbom = sbom(&wasm).unwrap();
+        assert_eq!(sbom.component.name, None);
+        assert_eq!(sbom.component.version, None);
+        assert_eq!(sbom.dependencies, None);
+        assert_eq!(
+            sbom.unavailable,
+            vec!["component.name", "component.version", "dependencies"]
+        );
+
+        let json = serde_json::to_string(&sbom).unwrap();
+        let value: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert!(value["component"]["name"].is_null());
+        assert!(value["dependencies"].is_null());
+        assert_eq!(value["format"], SBOM_FORMAT);
     }
 
     fn deployed_transport(hash_byte: u8) -> MockTransport {

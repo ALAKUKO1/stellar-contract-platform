@@ -146,8 +146,11 @@ enum Command {
         #[arg(long)]
         reference: Option<PathBuf>,
         /// Report `dep:` dependency entries and compare them with `--reference`.
-        #[arg(long)]
+        #[arg(long, conflicts_with = "sbom")]
         dependencies: bool,
+        /// Emit a minimal SBOM instead of the reproducibility report.
+        #[arg(long, conflicts_with_all = ["reference", "dependencies"])]
+        sbom: bool,
     },
     /// Run the REST API server or print its OpenAPI document.
     #[command(subcommand)]
@@ -688,13 +691,19 @@ fn run(cli: &Cli, format: OutputFormat) -> Result<ObservatoryExit> {
             wasm,
             reference,
             dependencies,
+            sbom,
         } => {
             let bytes = observatory_wasm::load_file(wasm)?;
             let reference_bytes = reference
                 .as_ref()
                 .map(|path| observatory_wasm::load_file(path))
                 .transpose()?;
-            if *dependencies {
+            if *sbom {
+                let document = observatory_verify::sbom(&bytes)?;
+                emit(format, "repro.sbom", &document, || {
+                    print_sbom(&document);
+                })?;
+            } else if *dependencies {
                 let report =
                     observatory_verify::dependency_report(&bytes, reference_bytes.as_deref())?;
                 emit(format, "repro.dependencies", &report, || {
@@ -1214,6 +1223,34 @@ fn print_interface_verification(result: &observatory_verify::InterfaceVerificati
     }
     if let Some(compatibility) = &result.compatibility {
         print_compat(compatibility);
+    }
+}
+
+fn print_sbom(sbom: &observatory_verify::Sbom) {
+    println!("format: {}", sbom.format);
+    println!(
+        "component: {}@{}",
+        sbom.component.name.as_deref().unwrap_or("<unknown>"),
+        sbom.component.version.as_deref().unwrap_or("<unknown>")
+    );
+    for hash in &sbom.component.hashes {
+        println!("{}: {}", hash.algorithm, hash.value);
+    }
+    match &sbom.dependencies {
+        Some(dependencies) => {
+            println!("dependencies:");
+            for dependency in dependencies {
+                println!(
+                    "  {} = {}",
+                    dependency.name,
+                    dependency.version.as_deref().unwrap_or("<unknown>")
+                );
+            }
+        }
+        None => println!("dependencies: <unavailable>"),
+    }
+    if !sbom.unavailable.is_empty() {
+        println!("unavailable: {}", sbom.unavailable.join(", "));
     }
 }
 
