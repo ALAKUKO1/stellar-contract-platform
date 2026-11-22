@@ -445,6 +445,14 @@ fn instance_fixture(hash: [u8; 32]) -> String {
     )
 }
 
+fn deployment_fixture(hash: [u8; 32], wasm: &[u8]) -> String {
+    format!(
+        r#"{{"getLedgerEntries":{{"__sequence":[{{"entries":[{{"key":"","xdr":"{}"}}]}},{{"entries":[{{"key":"","xdr":"{}"}}]}}]}}}}"#,
+        instance_xdr(hash),
+        code_xdr(wasm, hash)
+    )
+}
+
 const EMPTY_LEDGER_ENTRIES_FIXTURE: &str =
     r#"{"getLedgerEntries":{"__sequence":[{"entries":[]}]}}"#;
 
@@ -646,6 +654,95 @@ fn verify_interface_reports_a_match_against_a_fixture() {
         .stdout(predicate::str::contains("\"compatibility\""));
 }
 
+#[test]
+fn deployment_compare_reports_identical_local_artifacts_as_matched() {
+    let wasm = module_with_spec(&[spec_function("hello", &[], None)]);
+    let left = write_temp(&wasm, ".wasm");
+    let right = write_temp(&wasm, ".wasm");
+    binary()
+        .args([
+            "deployment",
+            "compare",
+            "--left-wasm",
+            left.path().to_str().unwrap(),
+            "--right-wasm",
+            right.path().to_str().unwrap(),
+            "--json",
+        ])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("\"kind\": \"deployment.compare\""))
+        .stdout(predicate::str::contains("\"hash\": \"match\""))
+        .stdout(predicate::str::contains("\"interface\": \"match\""));
+}
+
+#[test]
+fn deployment_compare_separates_hash_from_interface_changes() {
+    let wasm = module_with_spec(&[spec_function("hello", &[], None)]);
+    let mut other = wasm.clone();
+    other.extend(observatory_testutil::custom_section("build", b"different"));
+    let left = write_temp(&wasm, ".wasm");
+    let right = write_temp(&other, ".wasm");
+
+    binary()
+        .args([
+            "deployment",
+            "compare",
+            "--left-wasm",
+            left.path().to_str().unwrap(),
+            "--right-wasm",
+            right.path().to_str().unwrap(),
+            "--json",
+        ])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("\"hash\": \"mismatch\""))
+        .stdout(predicate::str::contains("\"interface\": \"match\""));
+
+    let changed = module_with_spec(&[spec_function("goodbye", &[], None)]);
+    let changed_file = write_temp(&changed, ".wasm");
+    binary()
+        .args([
+            "deployment",
+            "compare",
+            "--left-wasm",
+            left.path().to_str().unwrap(),
+            "--right-wasm",
+            changed_file.path().to_str().unwrap(),
+            "--json",
+        ])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("\"interface\": \"mismatch\""))
+        .stdout(predicate::str::contains("function::hello"));
+}
+
+#[test]
+fn deployment_compare_accepts_two_rpc_fixtures() {
+    let wasm = module_with_spec(&[spec_function("hello", &[], None)]);
+    let contract_id = format!("{}", stellar_strkey::Contract([9u8; 32]));
+    let left_fixture = deployment_fixture([7u8; 32], &wasm);
+    let right_fixture = deployment_fixture([7u8; 32], &wasm);
+    let left = write_temp(left_fixture.as_bytes(), ".json");
+    let right = write_temp(right_fixture.as_bytes(), ".json");
+    binary()
+        .args([
+            "deployment",
+            "compare",
+            "--contract",
+            &contract_id,
+            "--left-fixture",
+            left.path().to_str().unwrap(),
+            "--right-fixture",
+            right.path().to_str().unwrap(),
+            "--json",
+        ])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("\"hash\": \"match\""))
+        .stdout(predicate::str::contains("\"interface\": \"match\""));
+}
+
 fn metadata_module() -> Vec<u8> {
     use stellar_xdr::{
         Limits, ScEnvMetaEntry, ScEnvMetaEntryInterfaceVersion, ScMetaEntry, ScMetaV0, WriteXdr,
@@ -659,15 +756,47 @@ fn metadata_module() -> Vec<u8> {
         observatory_wasm::CONTRACT_ENV_META_SECTION,
         &env.to_xdr(Limits::none()).unwrap(),
     ));
-    let metadata = ScMetaEntry::ScMetaV0(ScMetaV0 {
-        key: "rsver".try_into().unwrap(),
-        val: "1.85.0".try_into().unwrap(),
-    });
+    let metadata = [
+        ScMetaEntry::ScMetaV0(ScMetaV0 {
+            key: "rsver".try_into().unwrap(),
+            val: "1.85.0".try_into().unwrap(),
+        }),
+        ScMetaEntry::ScMetaV0(ScMetaV0 {
+            key: "dep:serde".try_into().unwrap(),
+            val: "1.0.200".try_into().unwrap(),
+        }),
+    ];
+    let mut payload = Vec::new();
+    for entry in metadata {
+        payload.extend(entry.to_xdr(Limits::none()).unwrap());
+    }
     module.extend(observatory_testutil::custom_section(
         observatory_wasm::CONTRACT_META_SECTION,
-        &metadata.to_xdr(Limits::none()).unwrap(),
+        &payload,
     ));
     module
+}
+
+#[test]
+fn repro_reports_dependency_metadata_deterministically() {
+    let wasm = metadata_module();
+    let file = write_temp(&wasm, ".wasm");
+    let path = file.path().to_str().unwrap();
+    binary()
+        .args([
+            "repro",
+            path,
+            "--dependencies",
+            "--reference",
+            path,
+            "--json",
+        ])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("\"kind\": \"repro.dependencies\""))
+        .stdout(predicate::str::contains("\"name\": \"serde\""))
+        .stdout(predicate::str::contains("\"version\": \"1.0.200\""))
+        .stdout(predicate::str::contains("\"state\": \"match\""));
 }
 
 #[test]
@@ -692,6 +821,34 @@ fn repro_reports_metadata_without_claiming_source_reproduction() {
         .assert()
         .success()
         .stdout(predicate::str::contains("\"state\": \"match\""));
+}
+
+#[test]
+fn repro_sbom_is_valid_json_and_marks_absent_data() {
+    let wasm = metadata_module();
+    let file = write_temp(&wasm, ".wasm");
+    let path = file.path().to_str().unwrap();
+    let output = binary()
+        .args(["repro", path, "--sbom", "--json"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("\"kind\": \"repro.sbom\""))
+        .stdout(predicate::str::contains(
+            "\"format\": \"observatory-sbom/1\"",
+        ))
+        .stdout(predicate::str::contains("\"algorithm\": \"sha256\""))
+        .stdout(predicate::str::contains("\"dependencies\""))
+        .get_output()
+        .stdout
+        .clone();
+    let document: serde_json::Value = serde_json::from_slice(&output).unwrap();
+    assert!(document["data"]["component"]["name"].is_null());
+    assert_eq!(document["data"]["dependencies"][0]["name"], "serde");
+    assert!(document["data"]["component"]["version"].is_null());
+    assert_eq!(
+        document["data"]["unavailable"],
+        serde_json::json!(["component.name", "component.version"])
+    );
 }
 
 #[test]

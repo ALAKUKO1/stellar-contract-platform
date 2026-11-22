@@ -1191,7 +1191,11 @@ version = "0.1.0"
 dependencies = [
  "hex",
  "observatory-core",
+ "observatory-diff",
+ "observatory-interface",
  "observatory-rpc",
+ "observatory-testutil",
+ "observatory-wasm",
  "serde",
  "serde_json",
  "stellar-strkey 0.0.18",

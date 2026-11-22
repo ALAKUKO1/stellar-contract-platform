@@ -306,6 +306,36 @@ mod tests {
                 }),
             ),
             (
+                "repro.dependencies",
+                serde_json::json!({
+                    "dependencies": [
+                        { "name": "soroban-sdk", "version": "22.0.0" }
+                    ],
+                    "comparison": {
+                        "state": "match",
+                        "compared_dependencies": 1,
+                        "differences": [],
+                        "detail": "dependency metadata matches the reference artifact",
+                    },
+                }),
+            ),
+            (
+                "repro.sbom",
+                serde_json::json!({
+                    "format": "observatory-sbom/1",
+                    "component": {
+                        "name": "example-contract",
+                        "version": null,
+                        "hashes": [{
+                            "algorithm": "sha256",
+                            "value": "0000000000000000000000000000000000000000000000000000000000000000",
+                        }],
+                    },
+                    "dependencies": null,
+                    "unavailable": ["component.version", "dependencies"],
+                }),
+            ),
+            (
                 "doctor",
                 serde_json::json!({
                     "tool": TOOL_NAME,

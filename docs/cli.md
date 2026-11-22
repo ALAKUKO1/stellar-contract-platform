@@ -70,6 +70,15 @@ interface fingerprint.
 Inspects a deployed contract using a deterministic RPC fixture. The live HTTP
 transport is not shipped yet; `--rpc-url` is validated and recorded only.
 
+### `deployment compare --left-wasm <FILE> | --left-fixture <FILE> --right-wasm <FILE> | --right-fixture <FILE> [--contract <ID>] [--left-network <NET>] [--right-network <NET>]`
+
+Compares one contract across two networks or local artifacts. The hash verdict
+and interface verdict are reported separately: each is `match`, `mismatch`, or
+`unknown`. When both interfaces are known, `interface_diff` carries per-change
+detail. `--contract` is required only when a side uses an RPC fixture. Network
+labels default to `mainnet` (left) and `testnet` (right). Always exits `0`. See
+[deployment.md](deployment.md#cross-network-comparison).
+
 ### `verify artifact <WASM> --contract <ID> --rpc-fixture <FILE> [--network <NET>]`
 
 Compares the local artifact hash against the deployed executable hash.
@@ -92,6 +101,16 @@ also reports `match`/`mismatch` for the embedded metadata. The report always
 states `source_reproduction: not_performed`; the tool never rebuilds from source
 and never claims source reproducibility. See
 [reproducibility.md](reproducibility.md).
+
+With `--dependencies`, reports `dep:<name>` entries from `contractmetav0` and,
+when a reference is supplied, a deterministic comparison of them. Missing
+dependency data is reported as `unavailable`, never as an empty list. See
+[reproducibility.md](reproducibility.md#dependency-metadata).
+
+With `--sbom`, emits a minimal `observatory-sbom/1` document with the component
+identity, SHA-256 artifact hash, and any `dep:` entries. Fields that cannot be
+determined are `null` and listed in `unavailable`; the command does not invent
+data. See [reproducibility.md](reproducibility.md#minimal-sbom).
 
 ### `doctor`
 

@@ -329,6 +329,28 @@ pub struct EventsPage {
     pub oldest_ledger: Option<u32>,
 }
 
+/// The result of the documented `getHealth` method.
+///
+/// Fields mirror the published RPC schema exactly: `status`, both ledger
+/// sequences, both close times as Unix timestamp strings, and the configured
+/// retention window.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HealthResult {
+    /// Reported node status, `"healthy"` on a healthy endpoint.
+    pub status: String,
+    /// Most recent known ledger sequence.
+    pub latest_ledger: u32,
+    /// Unix timestamp (as a string) of the latest ledger close.
+    pub latest_ledger_close_time: String,
+    /// Oldest ledger sequence kept in history.
+    pub oldest_ledger: u32,
+    /// Unix timestamp (as a string) of the oldest ledger close.
+    pub oldest_ledger_close_time: String,
+    /// Maximum configured ledger retention window.
+    pub ledger_retention_window: u32,
+}
+
 /// A typed RPC client over a [`Transport`].
 #[derive(Debug, Clone)]
 pub struct RpcClient<T: Transport> {
@@ -402,6 +424,17 @@ impl<T: Transport> RpcClient<T> {
                 .get("protocolVersion")
                 .and_then(Value::as_u64)
                 .map(|value| value as u32),
+        })
+    }
+
+    /// Fetch endpoint health with the documented `getHealth` method.
+    ///
+    /// A malformed or incomplete result is a decode error rather than a
+    /// partially-filled health report; no fields are invented.
+    pub fn get_health(&self) -> Result<HealthResult> {
+        let result = self.call("getHealth", json!({}))?;
+        serde_json::from_value(result).map_err(|error| {
+            ObservatoryError::decode(format!("invalid getHealth response: {error}"))
         })
     }
 
@@ -818,6 +851,52 @@ mod tests {
 
         let metadata = Endpoint::parse("https://169.254.169.254").unwrap();
         assert!(metadata.validate_ssrf(&SsrfPolicy::local()).is_err());
+    }
+
+    #[test]
+    fn get_health_decodes_the_documented_fixture() {
+        let fixture = json!({
+            "getHealth": {
+                "status": "healthy",
+                "latestLedger": 3730763,
+                "latestLedgerCloseTime": "1784671485",
+                "oldestLedger": 3609804,
+                "oldestLedgerCloseTime": "1784065656",
+                "ledgerRetentionWindow": 120960
+            }
+        });
+        let transport = MockTransport::from_json(&fixture).unwrap();
+        let client = RpcClient::new(Endpoint::parse("https://example.org").unwrap(), &transport);
+        let health = client.get_health().unwrap();
+        assert_eq!(health.status, "healthy");
+        assert_eq!(health.latest_ledger, 3730763);
+        assert_eq!(health.latest_ledger_close_time, "1784671485");
+        assert_eq!(health.oldest_ledger, 3609804);
+        assert_eq!(health.oldest_ledger_close_time, "1784065656");
+        assert_eq!(health.ledger_retention_window, 120960);
+        assert_eq!(transport.calls(), vec!["getHealth".to_string()]);
+    }
+
+    #[test]
+    fn get_health_rejects_an_incomplete_result_instead_of_inventing_fields() {
+        let fixture = json!({ "getHealth": { "status": "healthy", "latestLedger": 1 } });
+        let transport = MockTransport::from_json(&fixture).unwrap();
+        let client = RpcClient::new(Endpoint::parse("https://example.org").unwrap(), transport);
+        let error = client.get_health().unwrap_err();
+        assert!(matches!(error, ObservatoryError::Decode(_)), "{error:?}");
+        assert!(error.to_string().contains("getHealth"), "{error}");
+    }
+
+    #[test]
+    fn get_health_normalizes_rpc_errors() {
+        let fixture = json!({
+            "getHealth": { "__error": { "code": -32000, "message": "unavailable" } }
+        });
+        let transport = MockTransport::from_json(&fixture).unwrap();
+        let client = RpcClient::new(Endpoint::parse("https://example.org").unwrap(), transport);
+        let error = client.get_health().unwrap_err();
+        assert!(matches!(error, ObservatoryError::Rpc(_)));
+        assert!(error.to_string().contains("unavailable"), "{error}");
     }
 
     fn contract_id() -> String {

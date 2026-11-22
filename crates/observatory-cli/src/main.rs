@@ -148,6 +148,12 @@ enum Command {
         /// Reference artifact to compare embedded metadata against.
         #[arg(long)]
         reference: Option<PathBuf>,
+        /// Report `dep:` dependency entries and compare them with `--reference`.
+        #[arg(long, conflicts_with = "sbom")]
+        dependencies: bool,
+        /// Emit a minimal SBOM instead of the reproducibility report.
+        #[arg(long, conflicts_with_all = ["reference", "dependencies"])]
+        sbom: bool,
     },
     /// Run the REST API server or print its OpenAPI document.
     #[command(subcommand)]
@@ -177,6 +183,30 @@ enum DeploymentCommand {
         /// RPC endpoint URL (recorded only in this build).
         #[arg(long)]
         rpc_url: Option<String>,
+    },
+    /// Compare one contract across two networks or local artifacts.
+    Compare {
+        /// Contract id (required when either side uses an RPC fixture).
+        #[arg(long)]
+        contract: Option<String>,
+        /// Local WASM artifact for the left side.
+        #[arg(long, conflicts_with = "left_fixture")]
+        left_wasm: Option<PathBuf>,
+        /// RPC fixture for the left side (requires `--contract`).
+        #[arg(long)]
+        left_fixture: Option<PathBuf>,
+        /// Network label for the left side.
+        #[arg(long, default_value = "mainnet")]
+        left_network: String,
+        /// Local WASM artifact for the right side.
+        #[arg(long, conflicts_with = "right_fixture")]
+        right_wasm: Option<PathBuf>,
+        /// RPC fixture for the right side (requires `--contract`).
+        #[arg(long)]
+        right_fixture: Option<PathBuf>,
+        /// Network label for the right side.
+        #[arg(long, default_value = "testnet")]
+        right_network: String,
     },
 }
 
@@ -557,6 +587,34 @@ fn run(cli: &Cli, format: OutputFormat) -> Result<ObservatoryExit> {
             emit(format, "deployment", &info, || print_deployment(&info))?;
             Ok(ObservatoryExit::Success)
         }
+        Command::Deployment(DeploymentCommand::Compare {
+            contract,
+            left_wasm,
+            left_fixture,
+            left_network,
+            right_wasm,
+            right_fixture,
+            right_network,
+        }) => {
+            let contract = contract.as_deref();
+            let left = load_network_contract(
+                contract,
+                left_network,
+                left_wasm.as_deref(),
+                left_fixture.as_deref(),
+            )?;
+            let right = load_network_contract(
+                contract,
+                right_network,
+                right_wasm.as_deref(),
+                right_fixture.as_deref(),
+            )?;
+            let comparison = observatory_deployment::compare_networks(left, right);
+            emit(format, "deployment.compare", &comparison, || {
+                print_network_comparison(&comparison)
+            })?;
+            Ok(ObservatoryExit::Success)
+        }
         Command::Verify(VerifyCommand::Artifact {
             wasm,
             contract,
@@ -648,17 +706,35 @@ fn run(cli: &Cli, format: OutputFormat) -> Result<ObservatoryExit> {
             emit(format, "verify.batch", &batch, || print_batch(&batch))?;
             Ok(verification_exit(batch.status(), &failures))
         }
-        Command::Repro { wasm, reference } => {
+        Command::Repro {
+            wasm,
+            reference,
+            dependencies,
+            sbom,
+        } => {
             let bytes = observatory_wasm::load_file(wasm)?;
             let reference_bytes = reference
                 .as_ref()
                 .map(|path| observatory_wasm::load_file(path))
                 .transpose()?;
-            let report =
-                observatory_verify::reproducibility_report(&bytes, reference_bytes.as_deref())?;
-            emit(format, "repro", &report, || {
-                print_reproducibility(&report);
-            })?;
+            if *sbom {
+                let document = observatory_verify::sbom(&bytes)?;
+                emit(format, "repro.sbom", &document, || {
+                    print_sbom(&document);
+                })?;
+            } else if *dependencies {
+                let report =
+                    observatory_verify::dependency_report(&bytes, reference_bytes.as_deref())?;
+                emit(format, "repro.dependencies", &report, || {
+                    print_dependencies(&report);
+                })?;
+            } else {
+                let report =
+                    observatory_verify::reproducibility_report(&bytes, reference_bytes.as_deref())?;
+                emit(format, "repro", &report, || {
+                    print_reproducibility(&report);
+                })?;
+            }
             Ok(ObservatoryExit::Success)
         }
         Command::Api(ApiCommand::Openapi) => {
@@ -855,6 +931,32 @@ fn fetch_rpc_events(
         }
     }
     Ok(events)
+}
+
+fn load_network_contract(
+    contract: Option<&str>,
+    network: &str,
+    wasm: Option<&Path>,
+    fixture: Option<&Path>,
+) -> Result<observatory_deployment::NetworkContract> {
+    match (wasm, fixture) {
+        (Some(path), None) => {
+            let bytes = observatory_wasm::load_file(path)?;
+            observatory_deployment::network_contract_from_wasm(network, contract, &bytes)
+        }
+        (None, Some(path)) => {
+            let contract = contract.ok_or_else(|| {
+                ObservatoryError::invalid(
+                    "--contract is required when a side is loaded from an RPC fixture",
+                )
+            })?;
+            let client = fixture_client(path)?;
+            observatory_deployment::network_contract_from_rpc(&client, contract, network)
+        }
+        _ => Err(ObservatoryError::invalid(
+            "each side needs exactly one of --left-wasm/--left-fixture (or the right equivalents)",
+        )),
+    }
 }
 
 fn read_text(path: &Path) -> Result<String> {
@@ -1133,6 +1235,28 @@ fn print_deployment(info: &observatory_deployment::DeploymentInfo) {
     );
 }
 
+fn print_network_comparison(comparison: &observatory_deployment::NetworkComparison) {
+    let verdict = |value: observatory_deployment::ComparisonVerdict| match value {
+        observatory_deployment::ComparisonVerdict::Match => "match",
+        observatory_deployment::ComparisonVerdict::Mismatch => "mismatch",
+        observatory_deployment::ComparisonVerdict::Unknown => "unknown",
+    };
+    println!(
+        "networks: {} vs {}",
+        comparison.left.network, comparison.right.network
+    );
+    println!(
+        "wasm_hash: {} ({} vs {})",
+        verdict(comparison.hash),
+        comparison.left.wasm_hash.as_deref().unwrap_or("<unknown>"),
+        comparison.right.wasm_hash.as_deref().unwrap_or("<unknown>")
+    );
+    println!("interface: {}", verdict(comparison.interface));
+    if let Some(diff) = &comparison.interface_diff {
+        print_diff(diff);
+    }
+}
+
 fn print_interface_verification(result: &observatory_verify::InterfaceVerification) {
     match result.interface_match {
         Some(true) => println!("interface: identical"),
@@ -1152,6 +1276,65 @@ fn print_interface_verification(result: &observatory_verify::InterfaceVerificati
     }
     if let Some(compatibility) = &result.compatibility {
         print_compat(compatibility);
+    }
+}
+
+fn print_sbom(sbom: &observatory_verify::Sbom) {
+    println!("format: {}", sbom.format);
+    println!(
+        "component: {}@{}",
+        sbom.component.name.as_deref().unwrap_or("<unknown>"),
+        sbom.component.version.as_deref().unwrap_or("<unknown>")
+    );
+    for hash in &sbom.component.hashes {
+        println!("{}: {}", hash.algorithm, hash.value);
+    }
+    match &sbom.dependencies {
+        Some(dependencies) => {
+            println!("dependencies:");
+            for dependency in dependencies {
+                println!(
+                    "  {} = {}",
+                    dependency.name,
+                    dependency.version.as_deref().unwrap_or("<unknown>")
+                );
+            }
+        }
+        None => println!("dependencies: <unavailable>"),
+    }
+    if !sbom.unavailable.is_empty() {
+        println!("unavailable: {}", sbom.unavailable.join(", "));
+    }
+}
+
+fn print_dependencies(report: &observatory_verify::DependencyReport) {
+    match &report.dependencies {
+        Some(dependencies) => {
+            println!("dependencies:");
+            for dependency in dependencies {
+                println!(
+                    "  {} = {}",
+                    dependency.name,
+                    dependency.version.as_deref().unwrap_or("<unknown>")
+                );
+            }
+        }
+        None => println!("dependencies: <unavailable>"),
+    }
+    let state = match report.comparison.state {
+        observatory_verify::DependencyComparisonState::Unavailable => "unavailable",
+        observatory_verify::DependencyComparisonState::Match => "match",
+        observatory_verify::DependencyComparisonState::Mismatch => "mismatch",
+    };
+    println!("comparison: {state}");
+    println!("{}", report.comparison.detail);
+    for difference in &report.comparison.differences {
+        println!(
+            "  {}\n    left:  {}\n    right: {}",
+            difference.name,
+            difference.left.as_deref().unwrap_or("<none>"),
+            difference.right.as_deref().unwrap_or("<none>")
+        );
     }
 }
 

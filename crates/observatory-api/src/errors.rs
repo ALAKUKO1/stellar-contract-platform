@@ -124,6 +124,12 @@ pub const ERROR_CATALOG: &[ErrorCatalogEntry] = &[
         description: "The origin is not allowed by the CORS policy.",
         retryable: false,
     },
+    ErrorCatalogEntry {
+        code: "idempotency_conflict",
+        status: 409,
+        description: "The Idempotency-Key was already used for a different request.",
+        retryable: false,
+    },
 ];
 
 /// Look up a code in the catalog.
