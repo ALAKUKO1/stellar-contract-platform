@@ -12,7 +12,10 @@ categories.workspace = true
 
 [dependencies]
 observatory-core.workspace = true
+observatory-diff.workspace = true
+observatory-interface.workspace = true
 observatory-rpc.workspace = true
+observatory-wasm.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 stellar-xdr.workspace = true
@@ -20,4 +23,5 @@ stellar-strkey.workspace = true
 hex.workspace = true
 
 [dev-dependencies]
+observatory-testutil.workspace = true
 stellar-xdr.workspace = true

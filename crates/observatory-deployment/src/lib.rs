@@ -10,6 +10,8 @@ use std::collections::VecDeque;
 
 use observatory_core::limits::MAX_WASM_BYTES;
 use observatory_core::{ObservatoryError, Result};
+use observatory_diff::{diff, InterfaceDiff};
+use observatory_interface::ContractInterface;
 use observatory_rpc::{LedgerEntryResult, RpcClient, Transport};
 use serde::Serialize;
 use stellar_xdr::{
@@ -33,6 +35,136 @@ pub struct DeploymentInfo {
     pub live_until_ledger_seq: Option<u32>,
     /// Whether a contract instance entry was found.
     pub found: bool,
+}
+
+/// A contract observed on one network, ready for cross-network comparison.
+///
+/// The interface itself is retained for diffing but is not serialized; reports
+/// carry its fingerprint and the resulting changes instead.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct NetworkContract {
+    /// Human-readable network label.
+    pub network: String,
+    /// The contract id, when the contract was looked up rather than supplied
+    /// as a local artifact.
+    pub contract_id: Option<String>,
+    /// The deployed WASM hash (hex), when known.
+    pub wasm_hash: Option<String>,
+    /// Canonical fingerprint of the interface, when known.
+    pub interface_sha256: Option<String>,
+    /// The parsed interface, retained for diffing but not serialized.
+    #[serde(skip)]
+    pub interface: Option<ContractInterface>,
+}
+
+/// The verdict for one aspect (hash or interface) of a comparison.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ComparisonVerdict {
+    /// Both sides are known and equal.
+    Match,
+    /// Both sides are known and differ.
+    Mismatch,
+    /// At least one side is unknown, so no verdict is possible.
+    Unknown,
+}
+
+/// The structured result of comparing one contract across two networks.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct NetworkComparison {
+    /// The left side.
+    pub left: NetworkContract,
+    /// The right side.
+    pub right: NetworkContract,
+    /// Whether the deployed WASM hashes match.
+    pub hash: ComparisonVerdict,
+    /// Whether the canonical interface fingerprints match.
+    pub interface: ComparisonVerdict,
+    /// Per-change detail when both interfaces are known.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub interface_diff: Option<InterfaceDiff>,
+}
+
+/// Build a network contract from local WASM bytes.
+///
+/// This is the offline path used by tests and by `--left-wasm`/`--right-wasm`.
+pub fn network_contract_from_wasm(
+    network: impl Into<String>,
+    contract_id: Option<&str>,
+    wasm: &[u8],
+) -> Result<NetworkContract> {
+    let interface = ContractInterface::from_wasm(wasm).ok();
+    let interface_sha256 = interface
+        .as_ref()
+        .map(ContractInterface::fingerprint)
+        .transpose()?;
+    Ok(NetworkContract {
+        network: network.into(),
+        contract_id: contract_id.map(str::to_string),
+        wasm_hash: Some(observatory_wasm::artifact_fingerprint(wasm)),
+        interface_sha256,
+        interface,
+    })
+}
+
+/// Build a network contract by inspecting a deployment through `client`.
+///
+/// This is the source abstraction for a live or fixture-backed RPC lookup.
+pub fn network_contract_from_rpc<T: Transport>(
+    client: &RpcClient<T>,
+    contract_id: &str,
+    network: impl Into<String>,
+) -> Result<NetworkContract> {
+    let network = network.into();
+    let info = inspect(client, contract_id)?;
+    let mut contract = NetworkContract {
+        network: network.clone(),
+        contract_id: Some(contract_id.to_string()),
+        wasm_hash: info.wasm_hash.clone(),
+        interface_sha256: None,
+        interface: None,
+    };
+    if let Some(hash) = &info.wasm_hash {
+        if let Some(wasm) = deployed_wasm(client, hash)? {
+            let local = network_contract_from_wasm(network, Some(contract_id), &wasm)?;
+            contract.interface = local.interface;
+            contract.interface_sha256 = local.interface_sha256;
+        }
+    }
+    Ok(contract)
+}
+
+/// Compare one contract across two networks.
+///
+/// Hashes and interfaces are reported independently so a hash mismatch and an
+/// interface change are never conflated. Unknown sides yield
+/// [`ComparisonVerdict::Unknown`] rather than a false match.
+#[must_use]
+pub fn compare_networks(left: NetworkContract, right: NetworkContract) -> NetworkComparison {
+    let hash = verdict(left.wasm_hash.as_deref(), right.wasm_hash.as_deref());
+    let interface = verdict(
+        left.interface_sha256.as_deref(),
+        right.interface_sha256.as_deref(),
+    );
+    let interface_diff = match (&left.interface, &right.interface) {
+        (Some(left), Some(right)) => Some(diff(left, right)),
+        _ => None,
+    };
+    NetworkComparison {
+        left,
+        right,
+        hash,
+        interface,
+        interface_diff,
+    }
+}
+
+fn verdict(left: Option<&str>, right: Option<&str>) -> ComparisonVerdict {
+    match (left, right) {
+        (Some(left), Some(right)) if left == right => ComparisonVerdict::Match,
+        (Some(_), Some(_)) => ComparisonVerdict::Mismatch,
+        _ => ComparisonVerdict::Unknown,
+    }
 }
 
 /// A small, bounded, in-memory cache for `getLedgerEntries` lookups.
@@ -516,5 +648,86 @@ mod tests {
         assert_eq!(transport.calls().len(), 1);
         cache.clear();
         assert!(cache.is_empty());
+    }
+
+    fn spec_module(functions: &[&str]) -> Vec<u8> {
+        let entries = functions
+            .iter()
+            .map(|name| observatory_testutil::spec::spec_function(name, &[], None))
+            .collect::<Vec<_>>();
+        observatory_testutil::module_with_spec(&entries)
+    }
+
+    #[test]
+    fn identical_contracts_match_on_hash_and_interface() {
+        let wasm = spec_module(&["hello"]);
+        let left = network_contract_from_wasm("mainnet", Some(&contract_id()), &wasm).unwrap();
+        let right = network_contract_from_wasm("testnet", Some(&contract_id()), &wasm).unwrap();
+
+        let comparison = compare_networks(left, right);
+
+        assert_eq!(comparison.hash, ComparisonVerdict::Match);
+        assert_eq!(comparison.interface, ComparisonVerdict::Match);
+        assert!(comparison
+            .interface_diff
+            .as_ref()
+            .is_some_and(|diff| diff.changes.is_empty()));
+    }
+
+    #[test]
+    fn differing_artifacts_report_a_hash_mismatch_only() {
+        let left = network_contract_from_wasm("mainnet", None, &spec_module(&["hello"])).unwrap();
+        let mut other = spec_module(&["hello"]);
+        other.extend(observatory_testutil::custom_section("build", b"different"));
+        let right = network_contract_from_wasm("testnet", None, &other).unwrap();
+
+        let comparison = compare_networks(left, right);
+
+        assert_eq!(comparison.hash, ComparisonVerdict::Mismatch);
+        assert_eq!(comparison.interface, ComparisonVerdict::Match);
+        assert!(comparison
+            .interface_diff
+            .as_ref()
+            .is_some_and(|diff| diff.changes.is_empty()));
+    }
+
+    #[test]
+    fn differing_interfaces_report_per_change_detail() {
+        let left =
+            network_contract_from_wasm("mainnet", None, &spec_module(&["hello", "extra"])).unwrap();
+        let right = network_contract_from_wasm("testnet", None, &spec_module(&["hello"])).unwrap();
+
+        let comparison = compare_networks(left, right);
+
+        assert_eq!(comparison.hash, ComparisonVerdict::Mismatch);
+        assert_eq!(comparison.interface, ComparisonVerdict::Mismatch);
+        let diff = comparison
+            .interface_diff
+            .expect("both interfaces are known");
+        assert!(diff.changes.iter().any(|change| {
+            change.path == "function::extra"
+                && change.severity == observatory_diff::Severity::Breaking
+        }));
+        assert!(!diff.changes.is_empty());
+    }
+
+    #[test]
+    fn rpc_source_loads_the_deployed_hash_and_interface() {
+        let wasm = spec_module(&["hello"]);
+        let instance = instance_entry(5);
+        let code = code_entry(&wasm);
+        let transport = MockTransport::from_json(&json!({ "getLedgerEntries": { "__sequence": [
+            { "entries": [ { "key": instance.key, "xdr": instance.xdr } ] },
+            { "entries": [ { "key": code.key, "xdr": code.xdr } ] }
+        ] } }))
+        .unwrap();
+        let client = RpcClient::new(Endpoint::parse("https://example.org").unwrap(), transport);
+
+        let contract = network_contract_from_rpc(&client, &contract_id(), "mainnet").unwrap();
+
+        assert_eq!(contract.network, "mainnet");
+        assert_eq!(contract.wasm_hash, Some(hex::encode([5u8; 32])));
+        assert!(contract.interface.is_some());
+        assert!(contract.interface_sha256.is_some());
     }
 }

@@ -445,6 +445,14 @@ fn instance_fixture(hash: [u8; 32]) -> String {
     )
 }
 
+fn deployment_fixture(hash: [u8; 32], wasm: &[u8]) -> String {
+    format!(
+        r#"{{"getLedgerEntries":{{"__sequence":[{{"entries":[{{"key":"","xdr":"{}"}}]}},{{"entries":[{{"key":"","xdr":"{}"}}]}}]}}}}"#,
+        instance_xdr(hash),
+        code_xdr(wasm, hash)
+    )
+}
+
 const EMPTY_LEDGER_ENTRIES_FIXTURE: &str =
     r#"{"getLedgerEntries":{"__sequence":[{"entries":[]}]}}"#;
 
@@ -644,6 +652,95 @@ fn verify_interface_reports_a_match_against_a_fixture() {
             "\"source_verification\": \"not_performed\"",
         ))
         .stdout(predicate::str::contains("\"compatibility\""));
+}
+
+#[test]
+fn deployment_compare_reports_identical_local_artifacts_as_matched() {
+    let wasm = module_with_spec(&[spec_function("hello", &[], None)]);
+    let left = write_temp(&wasm, ".wasm");
+    let right = write_temp(&wasm, ".wasm");
+    binary()
+        .args([
+            "deployment",
+            "compare",
+            "--left-wasm",
+            left.path().to_str().unwrap(),
+            "--right-wasm",
+            right.path().to_str().unwrap(),
+            "--json",
+        ])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("\"kind\": \"deployment.compare\""))
+        .stdout(predicate::str::contains("\"hash\": \"match\""))
+        .stdout(predicate::str::contains("\"interface\": \"match\""));
+}
+
+#[test]
+fn deployment_compare_separates_hash_from_interface_changes() {
+    let wasm = module_with_spec(&[spec_function("hello", &[], None)]);
+    let mut other = wasm.clone();
+    other.extend(observatory_testutil::custom_section("build", b"different"));
+    let left = write_temp(&wasm, ".wasm");
+    let right = write_temp(&other, ".wasm");
+
+    binary()
+        .args([
+            "deployment",
+            "compare",
+            "--left-wasm",
+            left.path().to_str().unwrap(),
+            "--right-wasm",
+            right.path().to_str().unwrap(),
+            "--json",
+        ])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("\"hash\": \"mismatch\""))
+        .stdout(predicate::str::contains("\"interface\": \"match\""));
+
+    let changed = module_with_spec(&[spec_function("goodbye", &[], None)]);
+    let changed_file = write_temp(&changed, ".wasm");
+    binary()
+        .args([
+            "deployment",
+            "compare",
+            "--left-wasm",
+            left.path().to_str().unwrap(),
+            "--right-wasm",
+            changed_file.path().to_str().unwrap(),
+            "--json",
+        ])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("\"interface\": \"mismatch\""))
+        .stdout(predicate::str::contains("function::hello"));
+}
+
+#[test]
+fn deployment_compare_accepts_two_rpc_fixtures() {
+    let wasm = module_with_spec(&[spec_function("hello", &[], None)]);
+    let contract_id = format!("{}", stellar_strkey::Contract([9u8; 32]));
+    let left_fixture = deployment_fixture([7u8; 32], &wasm);
+    let right_fixture = deployment_fixture([7u8; 32], &wasm);
+    let left = write_temp(left_fixture.as_bytes(), ".json");
+    let right = write_temp(right_fixture.as_bytes(), ".json");
+    binary()
+        .args([
+            "deployment",
+            "compare",
+            "--contract",
+            &contract_id,
+            "--left-fixture",
+            left.path().to_str().unwrap(),
+            "--right-fixture",
+            right.path().to_str().unwrap(),
+            "--json",
+        ])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("\"hash\": \"match\""))
+        .stdout(predicate::str::contains("\"interface\": \"match\""));
 }
 
 fn metadata_module() -> Vec<u8> {
