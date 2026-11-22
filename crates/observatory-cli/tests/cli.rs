@@ -4,7 +4,10 @@
 use std::io::Write;
 
 use assert_cmd::Command;
-use observatory_testutil::spec::{spec_function, spec_struct, ty_udt};
+use observatory_testutil::spec::{
+    spec_enum_with_doc, spec_function, spec_function_with_doc, spec_struct, spec_struct_with_doc,
+    spec_union_with_doc, ty_udt,
+};
 use observatory_testutil::{minimal_module, module_with_spec};
 use predicates::prelude::*;
 use stellar_xdr::{ScSpecEntry, ScSpecTypeDef};
@@ -97,6 +100,136 @@ fn spec_lists_functions() {
         .assert()
         .success()
         .stdout(predicate::str::contains("transfer"));
+}
+
+fn documented_entries() -> Vec<ScSpecEntry> {
+    vec![
+        spec_function_with_doc(
+            "transfer",
+            "Transfer tokens to a recipient.\nEmits a transfer event.",
+            &[("to", ty_udt("Recipient")), ("amount", ScSpecTypeDef::I128)],
+            Some(ScSpecTypeDef::Bool),
+        ),
+        spec_struct_with_doc(
+            "Recipient",
+            "A transfer recipient.",
+            &[
+                ("address", "The recipient address.", ScSpecTypeDef::Address),
+                ("memo", "", ScSpecTypeDef::U32),
+            ],
+        ),
+        spec_union_with_doc(
+            "Payload",
+            "A transfer payload.",
+            &[
+                ("None", "No payload.", None),
+                (
+                    "Amount",
+                    "An amount payload.",
+                    Some(vec![ScSpecTypeDef::I128]),
+                ),
+            ],
+        ),
+        spec_enum_with_doc(
+            "Status",
+            "Transfer status.",
+            &[("Active", "The transfer is active.", 0), ("Paused", "", 1)],
+        ),
+    ]
+}
+
+#[test]
+fn spec_renders_documentation_in_human_output() {
+    let file = write_temp(&module_with_spec(&documented_entries()), ".wasm");
+    let path = file.path().to_str().unwrap();
+    binary()
+        .args(["spec", path])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(
+            "Transfer tokens to a recipient.\n      Emits a transfer event.",
+        ))
+        .stdout(predicate::str::contains("A transfer recipient."))
+        .stdout(predicate::str::contains("A transfer payload."))
+        .stdout(predicate::str::contains("Transfer status."));
+
+    // JSON output is unchanged: docs remain structured fields on the model.
+    binary()
+        .args(["spec", path, "--json"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(
+            "\"doc\": \"Transfer tokens to a recipient.\\\\nEmits a transfer event.\"",
+        ));
+}
+
+#[test]
+fn spec_omits_empty_documentation() {
+    let file = write_temp(&module_with_spec(&contract_entries()), ".wasm");
+    let output = binary()
+        .args(["spec", file.path().to_str().unwrap()])
+        .output()
+        .expect("run binary");
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("fn transfer"));
+    assert!(
+        !stdout.lines().any(|line| line.trim().is_empty()),
+        "empty docs must not emit blank lines: {stdout}"
+    );
+}
+
+#[test]
+fn spec_type_renders_udt_documentation() {
+    let file = write_temp(&module_with_spec(&documented_entries()), ".wasm");
+    let path = file.path().to_str().unwrap();
+
+    binary()
+        .args(["spec", path, "--type", "Recipient"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("struct Recipient"))
+        .stdout(predicate::str::contains("A transfer recipient."))
+        .stdout(predicate::str::contains("field address: address"))
+        .stdout(predicate::str::contains("The recipient address."));
+
+    binary()
+        .args(["spec", path, "--type", "Payload"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("union Payload"))
+        .stdout(predicate::str::contains("A transfer payload."))
+        .stdout(predicate::str::contains("case None"))
+        .stdout(predicate::str::contains("No payload."))
+        .stdout(predicate::str::contains("case Amount(i128)"))
+        .stdout(predicate::str::contains("An amount payload."));
+
+    let first = binary()
+        .args(["spec", path, "--type", "Status"])
+        .output()
+        .expect("run binary");
+    assert!(first.status.success());
+    let stdout = String::from_utf8_lossy(&first.stdout);
+    assert!(stdout.contains("enum Status"));
+    assert!(stdout.contains("Transfer status."));
+    assert!(stdout.contains("case Active = 0"));
+    assert!(stdout.contains("The transfer is active."));
+
+    // The same type renders identically on repeated runs.
+    let second = binary()
+        .args(["spec", path, "--type", "Status"])
+        .output()
+        .expect("run binary");
+    assert_eq!(first.stdout, second.stdout);
+
+    // JSON output remains structured and unchanged.
+    binary()
+        .args(["spec", path, "--type", "Recipient", "--json"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(
+            "\"doc\": \"The recipient address.\"",
+        ));
 }
 
 #[test]

@@ -43,6 +43,17 @@ Name-length validation covers function and parameter names, user-defined type
 names and their fields/cases, and event names, topics, and parameters. Overlong
 names are reported, never silently truncated.
 
+## Documentation rendering
+
+Human `spec` output renders the documentation strings decoded from the
+specification: function docs and type docs are printed beneath their entries.
+`spec --type <NAME>` additionally prints the type doc and each field or case
+doc. Documentation is omitted when empty; no placeholder text is invented.
+Rendering preserves declared field/case order, so output is deterministic.
+
+The JSON output is structured and unchanged: documentation remains a `doc` field
+on each model entity.
+
 ## Supported and unsupported
 
 Supported: all `SCSpecEntry` variants in the Stellar XDR schema used by this

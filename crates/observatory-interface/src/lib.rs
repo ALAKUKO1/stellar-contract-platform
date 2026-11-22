@@ -489,6 +489,62 @@ mod tests {
     }
 
     #[test]
+    fn json_round_trip_preserves_udts_and_events() {
+        use observatory_testutil::spec::{spec_error_enum, spec_event, spec_union};
+        use stellar_xdr::ScSpecEventParamLocationV0;
+
+        let interface = ContractInterface::from_spec(spec(vec![
+            spec_struct(
+                "Config",
+                &[
+                    ("owner", ScSpecTypeDef::Address),
+                    ("limit", ScSpecTypeDef::U32),
+                ],
+            ),
+            spec_enum("Status", &[("Active", 0), ("Paused", 1)]),
+            spec_union(
+                "Payload",
+                &[("None", None), ("Some", Some(vec![ty_udt("Config")]))],
+            ),
+            spec_error_enum("Error", &[("NotFound", 1), ("Denied", 2)]),
+            spec_event(
+                "transfer",
+                &["transfer", "v1"],
+                &[
+                    (
+                        "from",
+                        ScSpecTypeDef::Address,
+                        ScSpecEventParamLocationV0::TopicList,
+                    ),
+                    (
+                        "amount",
+                        ScSpecTypeDef::I128,
+                        ScSpecEventParamLocationV0::Data,
+                    ),
+                ],
+            ),
+            spec_function(
+                "store",
+                &[("config", ty_udt("Config"))],
+                Some(ty_udt("Status")),
+            ),
+        ]));
+
+        let encoded = interface.canonical_json().expect("serialize interface");
+        let decoded: ContractInterface =
+            serde_json::from_slice(&encoded).expect("deserialize interface");
+
+        assert_eq!(decoded, interface);
+        assert_eq!(
+            decoded.fingerprint().unwrap(),
+            interface.fingerprint().unwrap()
+        );
+        assert_eq!(decoded.structs.len(), 1);
+        assert_eq!(decoded.error_enums.len(), 1);
+        assert_eq!(decoded.events.len(), 1);
+    }
+
+    #[test]
     fn known_fingerprint_vector() {
         let interface = ContractInterface::from_spec(spec(vec![spec_function(
             "ping",

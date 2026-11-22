@@ -177,6 +177,7 @@ pub fn normalize(entries: Vec<ScSpecEntry>) -> ContractSpec {
                     .into_iter()
                     .map(|case| SpecEnumCase {
                         name: case.name.to_string(),
+                        doc: case.doc.to_string(),
                         value: case.value,
                     })
                     .collect(),
@@ -189,6 +190,7 @@ pub fn normalize(entries: Vec<ScSpecEntry>) -> ContractSpec {
                     .into_iter()
                     .map(|case| SpecEnumCase {
                         name: case.name.to_string(),
+                        doc: case.doc.to_string(),
                         value: case.value,
                     })
                     .collect(),

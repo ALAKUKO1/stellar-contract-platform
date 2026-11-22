@@ -35,6 +35,11 @@ the command. The section is only read; it is never executed.
 Summarizes the contract specification. `--function` prints a single function;
 `--type` prints a single user-defined type.
 
+In human output, documentation strings carried by the specification are
+rendered for functions and types, and for the type and per-field/case members
+printed by `--type`. Documentation is omitted when empty; nothing is invented.
+The `--json` output is unchanged.
+
 ### `events <FILE> [--contract <ID>] [--topic <TEXT>] [--type <TYPE>] [--limit <N>]`
 
 Decodes an event fixture and filters it. `--limit` is applied last.

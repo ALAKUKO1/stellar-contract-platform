@@ -45,6 +45,13 @@ pub const HASH_CHUNK_BYTES: usize = 64 * 1024;
 /// Maximum number of `producers` entries retained across all categories.
 pub const MAX_PRODUCER_ENTRIES: usize = 64;
 
+/// Preamble that identifies a WebAssembly component-model binary.
+///
+/// A core module declares version `1` as `01 00 00 00`. A component declares
+/// version `0x0d`, layer `1`, and a reserved `0`, as `0d 00 01 00`. Inspecting
+/// components is out of scope for this crate.
+pub const COMPONENT_PREAMBLE: [u8; 4] = [0x0d, 0x00, 0x01, 0x00];
+
 /// A single import entry.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ImportInfo {
@@ -242,6 +249,12 @@ pub fn inspect(bytes: &[u8]) -> Result<WasmReport> {
     if &bytes[0..4] != b"\0asm" {
         return Err(ObservatoryError::wasm(
             "input does not start with the WASM magic bytes",
+        ));
+    }
+    if bytes[4..8] == COMPONENT_PREAMBLE {
+        return Err(ObservatoryError::unsupported(
+            "WebAssembly component-model binaries are not supported; \
+             only core WASM modules are in scope for contract inspection",
         ));
     }
 
@@ -582,6 +595,21 @@ mod tests {
     fn rejects_bad_magic() {
         let error = inspect(b"not wasm at all!!").unwrap_err();
         assert!(matches!(error, ObservatoryError::Wasm(_)));
+    }
+
+    #[test]
+    fn rejects_component_model_binaries() {
+        let component = [b"\0asm".as_slice(), &COMPONENT_PREAMBLE].concat();
+        let error = inspect(&component).unwrap_err();
+        assert_eq!(
+            error.code(),
+            observatory_core::ErrorCode::Unsupported,
+            "{error}"
+        );
+        let ObservatoryError::Unsupported(message) = error else {
+            panic!("expected unsupported error");
+        };
+        assert!(message.contains("component"), "{message}");
     }
 
     #[test]
