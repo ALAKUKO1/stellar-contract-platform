@@ -10,7 +10,7 @@ use observatory_core::hash::sha256_hex;
 use observatory_core::{ObservatoryError, Result};
 use serde::Serialize;
 
-use crate::rbac::Role;
+use crate::rbac::{Permission, Role};
 
 /// Prefix identifying an Observatory API key.
 pub const KEY_PREFIX: &str = "sco";
@@ -25,6 +25,9 @@ pub struct ApiKeyRecord {
     pub hash: String,
     /// The role granted to the key.
     pub role: Role,
+    /// Optional subset of the role's permissions.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub scopes: Option<Vec<Permission>>,
     /// A human label.
     pub label: String,
     /// Whether the key has been revoked.
@@ -38,6 +41,9 @@ pub struct Principal {
     pub key_id: String,
     /// The granted role.
     pub role: Role,
+    /// Optional subset of the role's permissions.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub scopes: Option<Vec<Permission>>,
 }
 
 /// A pluggable API-key store.
@@ -47,7 +53,12 @@ pub struct Principal {
 /// only metadata and hashes so keys survive a restart.
 pub trait KeyStore: Send + Sync {
     /// Generate a new key, returning the plaintext exactly once.
-    fn generate(&mut self, role: Role, label: &str) -> Result<(String, ApiKeyRecord)>;
+    fn generate(
+        &mut self,
+        role: Role,
+        label: &str,
+        scopes: Option<Vec<Permission>>,
+    ) -> Result<(String, ApiKeyRecord)>;
     /// Insert a record from a pre-computed hash (fixtures/imports).
     fn insert_hashed(&mut self, id: &str, hash: &str, role: Role, label: &str) -> ApiKeyRecord;
     /// Register a key from its plaintext form.
@@ -88,8 +99,14 @@ impl ApiKeyStore {
 
     /// Generate a new key for `role`. Returns `(plaintext, record)`.
     ///
-    /// The plaintext is shown once and never stored.
-    pub fn generate(&mut self, role: Role, label: &str) -> Result<(String, ApiKeyRecord)> {
+    /// The plaintext is shown once and never stored. `scopes` narrows the role
+    /// when present; callers are expected to validate it against the role first.
+    pub fn generate(
+        &mut self,
+        role: Role,
+        label: &str,
+        scopes: Option<Vec<Permission>>,
+    ) -> Result<(String, ApiKeyRecord)> {
         let mut secret = [0u8; 32];
         getrandom::getrandom(&mut secret)
             .map_err(|error| ObservatoryError::internal(format!("randomness failure: {error}")))?;
@@ -100,6 +117,7 @@ impl ApiKeyStore {
             id: id.clone(),
             hash: sha256_hex(secret_hex.as_bytes()),
             role,
+            scopes,
             label: label.to_string(),
             revoked: false,
         };
@@ -119,6 +137,7 @@ impl ApiKeyStore {
             id: id.into(),
             hash: hash.into(),
             role,
+            scopes: None,
             label: label.to_string(),
             revoked: false,
         };
@@ -160,6 +179,7 @@ impl ApiKeyStore {
             id: id.clone(),
             hash: sha256_hex(secret.as_bytes()),
             role,
+            scopes: None,
             label: label.to_string(),
             revoked: false,
         };
@@ -229,13 +249,19 @@ impl ApiKeyStore {
         Some(Principal {
             key_id: record.id.clone(),
             role: record.role,
+            scopes: record.scopes.clone(),
         })
     }
 }
 
 impl KeyStore for ApiKeyStore {
-    fn generate(&mut self, role: Role, label: &str) -> Result<(String, ApiKeyRecord)> {
-        ApiKeyStore::generate(self, role, label)
+    fn generate(
+        &mut self,
+        role: Role,
+        label: &str,
+        scopes: Option<Vec<Permission>>,
+    ) -> Result<(String, ApiKeyRecord)> {
+        ApiKeyStore::generate(self, role, label, scopes)
     }
 
     fn insert_hashed(&mut self, id: &str, hash: &str, role: Role, label: &str) -> ApiKeyRecord {
@@ -279,7 +305,7 @@ mod tests {
     #[test]
     fn generated_keys_authenticate() {
         let mut store = ApiKeyStore::new();
-        let (plaintext, record) = store.generate(Role::Developer, "ci").unwrap();
+        let (plaintext, record) = store.generate(Role::Developer, "ci", None).unwrap();
         assert!(plaintext.starts_with("sco_"));
         let principal = store.authenticate(&plaintext).unwrap();
         assert_eq!(principal.key_id, record.id);
@@ -289,7 +315,7 @@ mod tests {
     #[test]
     fn wrong_secret_and_prefix_fail() {
         let mut store = ApiKeyStore::new();
-        let (_, record) = store.generate(Role::Viewer, "x").unwrap();
+        let (_, record) = store.generate(Role::Viewer, "x", None).unwrap();
         assert!(store.authenticate("sco_wrong_deadbeef").is_none());
         assert!(store.authenticate("nope").is_none());
         let forged = format!("sco_{}_00", record.id);
@@ -299,7 +325,7 @@ mod tests {
     #[test]
     fn revoked_keys_fail() {
         let mut store = ApiKeyStore::new();
-        let (plaintext, record) = store.generate(Role::Admin, "ops").unwrap();
+        let (plaintext, record) = store.generate(Role::Admin, "ops", None).unwrap();
         assert!(store.revoke(&record.id));
         assert!(store.authenticate(&plaintext).is_none());
         assert!(!store.revoke("missing"));
@@ -308,9 +334,22 @@ mod tests {
     #[test]
     fn records_never_serialize_the_hash() {
         let mut store = ApiKeyStore::new();
-        let (_, record) = store.generate(Role::Viewer, "x").unwrap();
+        let (_, record) = store.generate(Role::Viewer, "x", None).unwrap();
         let json = serde_json::to_string(&record).unwrap();
         assert!(!json.contains(&record.hash));
         assert!(!json.contains("hash"));
+    }
+
+    #[test]
+    fn scopes_survive_authentication() {
+        let mut store = ApiKeyStore::new();
+        let (plaintext, record) = store
+            .generate(Role::Developer, "ci", Some(vec![Permission::RunAnalysis]))
+            .unwrap();
+        let principal = store.authenticate(&plaintext).unwrap();
+        assert_eq!(principal.role, record.role);
+        assert_eq!(principal.scopes, Some(vec![Permission::RunAnalysis]));
+        let json = serde_json::to_string(&record).unwrap();
+        assert!(json.contains("run_analysis"));
     }
 }

@@ -59,6 +59,12 @@ Analysis endpoints require `run_analysis`. `GET /health`, `/readiness`,
 `/version`, and `/metrics` are public. Metrics expose only aggregate counters,
 never endpoints, keys, or payloads.
 
+A key may optionally carry `scopes`: a subset of its role's permissions. An
+absent scope list grants the full role, so existing keys are unchanged. A scoped
+key is authorized only for the intersection of its role and its scopes. Unknown
+scope names, and scopes the role does not grant, are rejected when the key is
+created.
+
 ## CORS
 
 Cross-origin access is denied by default. Configure exact origins through
@@ -148,7 +154,8 @@ secrets.
 
 ### `POST /api/v1/keys` (admin)
 Creates an API key. Requires `manage_keys`.
-Body: `{ "role": "viewer|developer|maintainer|admin", "label": "ci" }`.
+Body: `{ "role": "viewer|developer|maintainer|admin", "label": "ci", "scopes": ["run_analysis"] }`.
+`scopes` is optional; when present it must be a subset of the role's permissions.
 The response (`201`) contains the plaintext exactly once; listing never returns it.
 
 ### `GET /api/v1/keys` (admin)

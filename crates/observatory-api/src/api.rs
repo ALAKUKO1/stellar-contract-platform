@@ -13,9 +13,9 @@ use observatory_core::hash::sha256_hex;
 use observatory_core::{ObservatoryError, Result as CoreResult, SCHEMA_VERSION, TOOL_NAME};
 use observatory_output::report;
 use observatory_platform::{
-    authorize, ApiKeyRecord, ApiKeyStore, AuditEvent, AuditLog, CompatibilityPolicy, JobQueue,
-    KeyStore, Observatory, Permission, PlatformConfig, Principal, RateLimiter, Role, WebhookEvent,
-    WebhookStore,
+    authorize_with_scopes, validate_scopes, ApiKeyRecord, ApiKeyStore, AuditEvent, AuditLog,
+    CompatibilityPolicy, JobQueue, KeyStore, Observatory, Permission, PlatformConfig, Principal,
+    RateLimiter, Role, WebhookEvent, WebhookStore,
 };
 use serde::Serialize;
 use serde_json::Value;
@@ -271,7 +271,7 @@ impl Api {
     pub fn generate_key(&self, role: Role, label: &str) -> CoreResult<String> {
         let (plaintext, record) = {
             let mut keys = self.keys.write().expect("key store poisoned");
-            keys.generate(role, label)?
+            keys.generate(role, label, None)?
         };
         self.record_audit(
             None,
@@ -596,7 +596,7 @@ impl Api {
             return Ok(());
         }
         let principal = principal.ok_or_else(ApiError::unauthorized)?;
-        if authorize(principal.role, permission) {
+        if authorize_with_scopes(principal.role, principal.scopes.as_deref(), permission) {
             Ok(())
         } else {
             Err(ApiError::forbidden())
@@ -653,9 +653,11 @@ impl Api {
                     return Err(ApiError::bad_request("label must not be empty"));
                 }
                 let role = Role::from_str(&body.role).map_err(ApiError::bad_request)?;
+                let scopes = parse_scopes(role, body.scopes.as_deref())?;
                 let (plaintext, record) = {
                     let mut keys = self.keys.write().expect("key store poisoned");
-                    keys.generate(role, &body.label).map_err(ApiError::from)?
+                    keys.generate(role, &body.label, scopes)
+                        .map_err(ApiError::from)?
                 };
                 Ok(response(
                     201,
@@ -663,6 +665,7 @@ impl Api {
                     &serde_json::json!({
                         "id": record.id,
                         "role": record.role,
+                        "scopes": record.scopes,
                         "label": record.label,
                         "plaintext": plaintext,
                         "note": "the plaintext key is shown once and cannot be retrieved again",
@@ -958,6 +961,21 @@ fn method_not_allowed() -> ApiError {
 
 fn webhook_not_found() -> ApiError {
     ApiError::new("not_found", "unknown webhook subscription")
+}
+
+fn parse_scopes(
+    role: Role,
+    values: Option<&[String]>,
+) -> Result<Option<Vec<Permission>>, ApiError> {
+    let Some(values) = values else {
+        return Ok(None);
+    };
+    let mut scopes = Vec::with_capacity(values.len());
+    for value in values {
+        scopes.push(Permission::from_str(value).map_err(ApiError::bad_request)?);
+    }
+    validate_scopes(role, &scopes).map_err(ApiError::bad_request)?;
+    Ok(Some(scopes))
 }
 
 fn parse_webhook_events(values: &[String]) -> Result<Vec<WebhookEvent>, ApiError> {
@@ -1905,6 +1923,97 @@ mod tests {
             &admin,
         );
         assert_eq!(api.handle(&create, "ip", 0).status, 400);
+    }
+
+    fn create_scoped_key(api: &Api, admin: &str, role: &str, scopes: Value) -> Response {
+        api.handle(
+            &with_key(
+                post(
+                    "/api/v1/keys",
+                    serde_json::json!({ "role": role, "label": "scoped", "scopes": scopes }),
+                ),
+                admin,
+            ),
+            "ip",
+            0,
+        )
+    }
+
+    #[test]
+    fn scoped_keys_cannot_exceed_their_scopes() {
+        let (api, admin) = api_with_admin();
+        let response = create_scoped_key(
+            &api,
+            &admin,
+            "developer",
+            serde_json::json!(["read_version"]),
+        );
+        assert_eq!(response.status, 201);
+        let body: Value = serde_json::from_slice(&response.body).unwrap();
+        assert_eq!(body["data"]["scopes"], serde_json::json!(["read_version"]));
+        let scoped = body["data"]["plaintext"].as_str().unwrap().to_string();
+
+        let inspect = with_key(
+            post(
+                "/api/v1/contracts/inspect",
+                serde_json::json!({ "wasm_base64": contract() }),
+            ),
+            &scoped,
+        );
+        assert_eq!(
+            api.handle(&inspect, "ip", 0).status,
+            403,
+            "run_analysis is outside the key's scopes"
+        );
+    }
+
+    #[test]
+    fn scoped_keys_keep_only_their_allowed_permissions() {
+        let (api, admin) = api_with_admin();
+        let response = create_scoped_key(
+            &api,
+            &admin,
+            "developer",
+            serde_json::json!(["run_analysis"]),
+        );
+        assert_eq!(response.status, 201);
+        let body: Value = serde_json::from_slice(&response.body).unwrap();
+        let scoped = body["data"]["plaintext"].as_str().unwrap().to_string();
+
+        let inspect = with_key(
+            post(
+                "/api/v1/contracts/inspect",
+                serde_json::json!({ "wasm_base64": contract() }),
+            ),
+            &scoped,
+        );
+        assert_eq!(api.handle(&inspect, "ip", 0).status, 200);
+    }
+
+    #[test]
+    fn key_creation_rejects_unknown_or_excessive_scopes() {
+        let (api, admin) = api_with_admin();
+        assert_eq!(
+            create_scoped_key(
+                &api,
+                &admin,
+                "developer",
+                serde_json::json!(["not_a_scope"])
+            )
+            .status,
+            400
+        );
+        assert_eq!(
+            create_scoped_key(
+                &api,
+                &admin,
+                "developer",
+                serde_json::json!(["manage_keys"])
+            )
+            .status,
+            400,
+            "a scope may not exceed its role"
+        );
     }
 
     #[test]
