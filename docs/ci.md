@@ -59,6 +59,31 @@ ci:
 `ERROR`; statuses left out exit `0`. See
 [verification.md](verification.md#artifact-verification).
 
+## Baseline-vs-head compatibility job
+
+Run this check on pull requests against the committed fixtures in
+`fixtures/compat/` with the strict policy:
+
+```bash
+./target/debug/stellar-contract-platform compat \
+  fixtures/compat/baseline.wasm fixtures/compat/head.wasm --policy strict
+```
+
+The fixtures contain only a `contractspecv0` section, so the job does not build a
+Soroban contract and needs no WASM target. An incompatible change to
+`fixtures/compat/head.wasm` exits `6` and fails the job.
+
+Run the committed negative pair
+(`fixtures/compat/negative/baseline.wasm` vs `negative/head.wasm`) as well and
+assert that it reports `incompatible` with exit code `6`; that step exercises the
+failure path on every run, even when the gate pair is compatible.
+See [`../fixtures/compat/README.md`](../fixtures/compat/README.md) for the fixture
+contents.
+
+The GitHub Actions definition for this job is supplied in the pull request that
+added the fixtures and is not committed here; commit it as
+`.github/workflows/compat.yml` to enable the check.
+
 ## Coverage
 
 The `Coverage` CI job runs `cargo-llvm-cov` on pull requests and pushes to
