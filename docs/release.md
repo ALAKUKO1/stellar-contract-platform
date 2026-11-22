@@ -1,7 +1,9 @@
 # Releasing crates
 
 Crates are **not published** to crates.io yet. This document records the
-packaging state; it is not a publication claim.
+packaging state; it is not a publication claim. Tagged releases also publish an
+SBOM and build provenance; see [supply-chain.md](supply-chain.md) for the
+artifacts and verification commands.
 
 ## Metadata
 
