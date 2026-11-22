@@ -1,0 +1,50 @@
+# cargo-deny configuration (issue #104).
+#
+# Every allow-listed license is a common, OSI-approved or public-domain license
+# used by this workspace's dependency tree. Add a new entry only with a reason.
+# See docs/ci.md for the policy and the update procedure.
+
+[graph]
+all-features = true
+
+[advisories]
+version = 2
+# A yanked crate is not automatically vulnerable, but it is never a version we
+# want to keep shipping. Fix the lockfile instead of ignoring this.
+yanked = "deny"
+ignore = []
+
+[licenses]
+version = 2
+confidence-threshold = 0.8
+# Permissive licenses plus the weak-copyleft licenses already present in the
+# dependency tree. Each is accepted for use in a distributed CLI binary.
+allow = [
+    "MIT",
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "ISC",
+    "0BSD",
+    "Unicode-3.0",
+    "Zlib",
+    "MPL-2.0",
+    "Unlicense",
+    "CC0-1.0",
+    "CDLA-Permissive-2.0",
+    "OpenSSL",
+]
+
+[bans]
+multiple-versions = "warn"
+wildcards = "deny"
+highlight = "all"
+deny = []
+skip = []
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]
+allow-git = []

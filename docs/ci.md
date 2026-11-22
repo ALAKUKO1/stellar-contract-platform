@@ -127,3 +127,26 @@ jobs:
 
 The repository workflow `.github/workflows/observatory-action.yml` exercises all
 three commands against the demo fixtures.
+
+## Dependency deny policy
+
+`deny.toml` runs `cargo-deny` on every pull request (see the
+`security-audit.yml` workflow, job `cargo-deny`) and checks advisories, licenses,
+duplicate/wildcard bans, and crate sources.
+
+- **Advisories**: yanked crates are denied; a vulnerability is fixed by updating
+  the lockfile, not by ignoring it.
+- **Licenses**: only common permissive/public-domain licenses and the
+  weak-copyleft licenses already present (MPL-2.0) are allowed, each listed in
+  `deny.toml`. Add a license only with a documented reason in review.
+- **Bans**: wildcard dependencies are denied; duplicate versions are warnings so
+  they can be reduced deliberately.
+- **Sources**: only crates.io is allowed; unknown registries and git sources are
+  denied.
+
+To reproduce locally:
+
+```bash
+cargo install cargo-deny --locked
+cargo deny check
+```

@@ -219,6 +219,30 @@ enum VerifyCommand {
         /// Right metadata JSON file.
         right: PathBuf,
     },
+    /// Verify every artifact listed in a batch manifest.
+    Batch {
+        /// JSON manifest with an `entries` array (see docs/cli.md).
+        manifest: PathBuf,
+        /// Fallback network for entries that omit `network`.
+        #[arg(long)]
+        network: Option<String>,
+    },
+}
+
+#[derive(Debug, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct BatchManifest {
+    entries: Vec<BatchEntry>,
+}
+
+#[derive(Debug, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct BatchEntry {
+    artifact: PathBuf,
+    contract: String,
+    rpc_fixture: PathBuf,
+    #[serde(default)]
+    network: Option<String>,
 }
 
 #[derive(Debug, Subcommand)]
@@ -575,6 +599,34 @@ fn run(cli: &Cli, format: OutputFormat) -> Result<ObservatoryExit> {
                 }
             })?;
             Ok(ObservatoryExit::Success)
+        }
+        Command::Verify(VerifyCommand::Batch { manifest, network }) => {
+            let failures = verification_failure_policy(&project)?;
+            let value = read_json(manifest)?;
+            let manifest: BatchManifest = serde_json::from_value(value).map_err(|error| {
+                ObservatoryError::invalid(format!("invalid batch manifest: {error}"))
+            })?;
+            if manifest.entries.is_empty() {
+                return Err(ObservatoryError::invalid(
+                    "batch manifest must contain at least one entry",
+                ));
+            }
+            let mut results = Vec::with_capacity(manifest.entries.len());
+            for entry in &manifest.entries {
+                let bytes = observatory_wasm::load_file(&entry.artifact)?;
+                let client = fixture_client(&entry.rpc_fixture)?;
+                let choice = entry.network.clone().or_else(|| network.clone());
+                let network = resolve_network(&project, &choice);
+                results.push(observatory_verify::verify_local_vs_deployed(
+                    &bytes,
+                    &client,
+                    &entry.contract,
+                    &network,
+                )?);
+            }
+            let batch = observatory_verify::BatchVerification::from_results(results);
+            emit(format, "verify.batch", &batch, || print_batch(&batch))?;
+            Ok(verification_exit(batch.status(), &failures))
         }
         Command::Repro { wasm, reference } => {
             let bytes = observatory_wasm::load_file(wasm)?;
@@ -1016,4 +1068,20 @@ fn print_verification(result: &observatory_verify::VerificationResult) {
     if let Some(deployed) = &result.deployed_wasm_hash {
         println!("deployed_wasm_hash: {deployed}");
     }
+}
+
+fn print_batch(batch: &observatory_verify::BatchVerification) {
+    for result in &batch.results {
+        println!(
+            "{}: {:?} ({})",
+            result.contract_id, result.status, result.detail
+        );
+    }
+    println!(
+        "total: {} matched: {} mismatched: {} insufficient_data: {}",
+        batch.summary.total,
+        batch.summary.matched,
+        batch.summary.mismatched,
+        batch.summary.insufficient_data
+    );
 }
