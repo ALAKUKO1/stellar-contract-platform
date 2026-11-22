@@ -17,11 +17,13 @@ pub mod project;
 pub mod ratelimit;
 pub mod rbac;
 pub mod service;
+pub mod store;
 pub mod webhook;
+pub mod webhook_delivery;
 
 pub use audit::{AuditEvent, AuditLog};
-pub use auth::{ApiKeyRecord, ApiKeyStore, Principal};
-pub use config::{CorsConfig, PlatformConfig};
+pub use auth::{ApiKeyRecord, ApiKeyStore, KeyStore, Principal};
+pub use config::{AuditConfig, CorsConfig, NetworkProfile, PlatformConfig};
 pub use jobs::{Job, JobQueue, JobState};
 pub use observatory_compat::CompatibilityPolicy;
 pub use policy::{load_policy, parse_policy};
@@ -29,6 +31,11 @@ pub use project::{ConfigFormat, ProjectConfig};
 pub use ratelimit::{RateLimitConfig, RateLimitDecision, RateLimiter};
 pub use rbac::{authorize, Permission, Role};
 pub use service::Observatory;
+pub use store::FileKeyStore;
 pub use webhook::{
     validate_webhook_url, WebhookCreated, WebhookEvent, WebhookStore, WebhookSubscription,
+};
+pub use webhook_delivery::{
+    deliver, sign, verify, Clock, DeliveryOutcome, DeliveryStatus, HttpTransport, Sleeper,
+    SystemClock, ThreadSleeper, WebhookConfig, WebhookRegistration, WebhookTransport,
 };

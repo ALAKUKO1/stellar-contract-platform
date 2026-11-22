@@ -134,13 +134,13 @@ and its test suite.
 | JSON reports | Implemented | `observatory-output` + API envelope | JSON schemas (#24) |
 | CLI | Implemented | `observatory-cli`, 10 e2e tests | completions (#25), `--format` (#38) |
 | REST API | Implemented | `observatory-api`, 18 tests | deployed endpoints, more routes |
-| Authentication | Implemented (API keys) | `observatory-platform` auth, 4 tests | persistence/rotation |
+| Authentication | Implemented (API keys) | `observatory-platform` auth, 4 tests | key rotation |
 | Authorization (RBAC) | Implemented | `observatory-platform` rbac, 3 tests | resource-level roles |
-| Rate limiting | Implemented (fixed window) | `observatory-platform` ratelimit, 3 tests | distributed limiting |
+| Rate limiting | Implemented (fixed window, per-route) | `observatory-platform` ratelimit | distributed limiting |
 | OpenAPI | Implemented + sync test | `observatory-api::openapi` | richer schemas |
-| Webhooks | Missing | — | #new (backlog) |
+| Webhooks | Registration + signed delivery implemented | `observatory-platform::webhook` / `webhook_delivery`, loopback tests | richer event catalog |
 | SDKs | Missing | — | #new (backlog) |
-| Persistence | Missing | — | #new (backlog) |
+| Persistence | API keys via `FileKeyStore` | `observatory-platform::store` | users, audit events |
 | Live RPC | Missing | — | #13 |
 
 ## Platform layer

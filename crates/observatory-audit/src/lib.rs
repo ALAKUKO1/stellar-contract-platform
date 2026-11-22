@@ -7,8 +7,9 @@
 //! Each check emits a finding with a stable id so CI can suppress or track
 //! individual rules.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
+use observatory_core::{ObservatoryError, Result};
 use observatory_interface::ContractInterface;
 use observatory_spec::{SpecSeverity, SpecType};
 use observatory_wasm::{WasmReport, CONTRACT_ENV_META_SECTION, CONTRACT_META_SECTION};
@@ -88,6 +89,88 @@ pub const RULE_IDS: &[&str] = &[
     "type.duplicate-case",
     "type.duplicate-field",
 ];
+
+/// Rule ids that are experimental.
+///
+/// Experimental rules are excluded by default; enable them explicitly through
+/// [`AuditConfig::enabled`].
+pub const EXPERIMENTAL_RULE_IDS: &[&str] = &[
+    "artifact.duplicate-metadata-section",
+    "artifact.memory64",
+    "artifact.metadata-without-code",
+    "artifact.metadata-without-contract-spec",
+    "artifact.no-contract-spec",
+    "artifact.no-memory",
+    "artifact.oversized-spec",
+    "function.duplicate-param",
+    "interface.empty",
+    "interface.no-functions",
+    "type.duplicate-case",
+    "type.duplicate-field",
+];
+
+/// Rule selection and severity overrides for the audit heuristics.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(deny_unknown_fields)]
+pub struct AuditConfig {
+    /// Rule ids to run.
+    ///
+    /// When absent, every non-experimental rule runs. Any rule not listed is
+    /// skipped, including experimental rules listed by default nowhere.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub enabled: Option<Vec<String>>,
+    /// Replacements for a rule's default severity, keyed by rule id.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub severity: BTreeMap<String, FindingSeverity>,
+}
+
+impl AuditConfig {
+    /// Validate every configured rule id against [`RULE_IDS`].
+    pub fn validate(&self) -> Result<()> {
+        if let Some(enabled) = &self.enabled {
+            for id in enabled {
+                validate_rule_id(id)?;
+            }
+        }
+        for id in self.severity.keys() {
+            validate_rule_id(id)?;
+        }
+        Ok(())
+    }
+
+    fn apply(&self, report: AuditReport) -> AuditReport {
+        let enabled: BTreeSet<&str> = match &self.enabled {
+            Some(ids) => ids.iter().map(String::as_str).collect(),
+            None => RULE_IDS
+                .iter()
+                .copied()
+                .filter(|id| !EXPERIMENTAL_RULE_IDS.contains(id))
+                .collect(),
+        };
+        let mut findings: Vec<Finding> = report
+            .findings
+            .into_iter()
+            .filter(|finding| enabled.contains(finding.id.as_str()))
+            .collect();
+        for finding in &mut findings {
+            if let Some(severity) = self.severity.get(&finding.id) {
+                finding.severity = *severity;
+            }
+        }
+        AuditReport::from_findings(findings)
+    }
+}
+
+fn validate_rule_id(id: &str) -> Result<()> {
+    if RULE_IDS.contains(&id) {
+        Ok(())
+    } else {
+        Err(ObservatoryError::invalid(format!(
+            "unknown audit rule id `{id}`; expected one of: {}",
+            RULE_IDS.join(", ")
+        )))
+    }
+}
 
 impl AuditReport {
     fn from_findings(mut findings: Vec<Finding>) -> Self {
@@ -320,6 +403,18 @@ pub fn audit_interface(interface: &ContractInterface) -> AuditReport {
     AuditReport::from_findings(findings)
 }
 
+/// Run interface heuristics under a rule configuration.
+///
+/// Disabled rules are skipped and severity overrides are applied. Unknown rule
+/// ids are rejected.
+pub fn audit_interface_with_config(
+    interface: &ContractInterface,
+    config: &AuditConfig,
+) -> Result<AuditReport> {
+    config.validate()?;
+    Ok(config.apply(audit_interface(interface)))
+}
+
 /// Run artifact heuristics.
 #[must_use]
 pub fn audit_artifact(report: &WasmReport) -> AuditReport {
@@ -429,6 +524,18 @@ pub fn audit_artifact(report: &WasmReport) -> AuditReport {
     }
 
     AuditReport::from_findings(findings)
+}
+
+/// Run artifact heuristics under a rule configuration.
+///
+/// Disabled rules are skipped and severity overrides are applied. Unknown rule
+/// ids are rejected.
+pub fn audit_artifact_with_config(
+    report: &WasmReport,
+    config: &AuditConfig,
+) -> Result<AuditReport> {
+    config.validate()?;
+    Ok(config.apply(audit_artifact(report)))
 }
 
 fn duplicate_names<'a>(names: impl IntoIterator<Item = &'a str>) -> Vec<&'a str> {
@@ -780,6 +887,87 @@ mod tests {
         sorted.sort_unstable();
         sorted.dedup();
         assert_eq!(sorted, RULE_IDS);
+    }
+
+    #[test]
+    fn experimental_ids_are_registered_and_sorted() {
+        let mut sorted = EXPERIMENTAL_RULE_IDS.to_vec();
+        sorted.sort_unstable();
+        sorted.dedup();
+        assert_eq!(sorted, EXPERIMENTAL_RULE_IDS);
+        for id in EXPERIMENTAL_RULE_IDS {
+            assert!(
+                RULE_IDS.contains(id),
+                "unregistered experimental rule `{id}`"
+            );
+        }
+    }
+
+    #[test]
+    fn default_config_skips_experimental_rules() {
+        let wasm = observatory_wasm::inspect(&minimal_module()).unwrap();
+        let report = audit_artifact_with_config(&wasm, &AuditConfig::default()).unwrap();
+        assert!(report.findings.iter().all(|finding| !finding.experimental));
+        assert!(report
+            .findings
+            .iter()
+            .any(|finding| finding.id == "artifact.no-code"));
+        assert!(!report
+            .findings
+            .iter()
+            .any(|finding| finding.id == "artifact.no-contract-spec"));
+    }
+
+    #[test]
+    fn unlisted_rules_are_skipped() {
+        let wasm = observatory_wasm::inspect(&minimal_module()).unwrap();
+        let config = AuditConfig {
+            enabled: Some(vec!["artifact.no-contract-spec".to_string()]),
+            severity: BTreeMap::new(),
+        };
+        let report = audit_artifact_with_config(&wasm, &config).unwrap();
+        assert_eq!(
+            report
+                .findings
+                .iter()
+                .map(|finding| finding.id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["artifact.no-contract-spec"]
+        );
+    }
+
+    #[test]
+    fn severity_override_changes_the_status() {
+        let wasm = observatory_wasm::inspect(&minimal_module()).unwrap();
+        let config = AuditConfig {
+            enabled: Some(vec!["artifact.no-code".to_string()]),
+            severity: BTreeMap::from([("artifact.no-code".to_string(), FindingSeverity::Error)]),
+        };
+        let report = audit_artifact_with_config(&wasm, &config).unwrap();
+        assert_eq!(report.status, AuditStatus::Error);
+        assert_eq!(report.findings[0].severity, FindingSeverity::Error);
+    }
+
+    #[test]
+    fn unknown_rule_ids_are_rejected() {
+        let wasm = observatory_wasm::inspect(&minimal_module()).unwrap();
+        let enabled = AuditConfig {
+            enabled: Some(vec!["artifact.nope".to_string()]),
+            severity: BTreeMap::new(),
+        };
+        let error = audit_artifact_with_config(&wasm, &enabled).unwrap_err();
+        assert!(error
+            .to_string()
+            .contains("unknown audit rule id `artifact.nope`"));
+
+        let severity = AuditConfig {
+            enabled: None,
+            severity: BTreeMap::from([("artifact.nope".to_string(), FindingSeverity::Warn)]),
+        };
+        let error = audit_artifact_with_config(&wasm, &severity).unwrap_err();
+        assert!(error
+            .to_string()
+            .contains("unknown audit rule id `artifact.nope`"));
     }
 
     #[test]

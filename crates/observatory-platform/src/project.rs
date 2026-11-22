@@ -4,11 +4,13 @@
 //! typo cannot silently disable a setting. The schema is intentionally small and
 //! only exposes settings that the implementation actually honours.
 
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
-use observatory_core::{ObservatoryError, Result};
+use observatory_core::{Network, ObservatoryError, Result};
 use serde::{Deserialize, Serialize};
 
+use crate::config::{validate_profile_name, AuditConfig, NetworkProfile};
 use crate::ratelimit::RateLimitConfig;
 use crate::rbac::Role;
 
@@ -39,6 +41,15 @@ pub struct ProjectConfig {
     /// CI defaults.
     #[serde(default)]
     pub ci: CiSection,
+    /// Audit rule selection and severity overrides.
+    #[serde(default)]
+    pub audit: AuditConfig,
+    /// Named per-network override profiles, keyed by network name.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub profiles: BTreeMap<String, NetworkProfile>,
+    /// Profile selected when `--profile` is omitted.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub profile: Option<String>,
 }
 
 /// Project identity.
@@ -83,6 +94,16 @@ impl Default for CompatibilitySection {
     }
 }
 
+fn parse_compatibility_policy(name: &str) -> Result<crate::CompatibilityPolicy> {
+    match name {
+        "strict" => Ok(crate::CompatibilityPolicy::strict()),
+        "lenient" => Ok(crate::CompatibilityPolicy::lenient()),
+        other => Err(ObservatoryError::invalid(format!(
+            "unknown compatibility policy `{other}`; expected strict or lenient"
+        ))),
+    }
+}
+
 /// RPC defaults.
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -102,6 +123,9 @@ pub struct ApiSection {
     /// Optional rate-limit override.
     #[serde(default)]
     pub rate_limit: Option<RateLimitSection>,
+    /// Optional per-route limits, keyed by exact request path.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub route_limits: BTreeMap<String, RateLimitSection>,
     /// Optional CORS policy; an empty allow-list denies every cross-origin call.
     #[serde(default)]
     pub cors: CorsSection,
@@ -116,6 +140,7 @@ impl Default for ApiSection {
         ApiSection {
             require_auth: true,
             rate_limit: None,
+            route_limits: BTreeMap::new(),
             cors: CorsSection::default(),
         }
     }
@@ -194,7 +219,11 @@ impl ProjectConfig {
             ConfigFormat::Toml => toml::from_str(input).map_err(|error| error.to_string()),
             ConfigFormat::Json => serde_json::from_str(input).map_err(|error| error.to_string()),
         };
-        parsed.map_err(|error| ObservatoryError::invalid(format!("invalid configuration: {error}")))
+        let config: Self = parsed.map_err(|error| {
+            ObservatoryError::invalid(format!("invalid configuration: {error}"))
+        })?;
+        config.validate()?;
+        Ok(config)
     }
 
     /// Load configuration from a path, inferring the format.
@@ -218,14 +247,71 @@ impl ProjectConfig {
         Ok(None)
     }
 
+    /// Validate profile names and overrides, and the selected profile.
+    fn validate(&self) -> Result<()> {
+        self.audit.validate()?;
+        for (name, profile) in &self.profiles {
+            validate_profile_name(name)?;
+            profile.validate()?;
+        }
+        self.selected_profile(None)?;
+        Ok(())
+    }
+
+    /// Resolve the selected profile.
+    ///
+    /// `name` is the `--profile` flag; when it is absent the `profile` field
+    /// applies. `None` means no profile was selected, so no overrides apply.
+    pub fn selected_profile(&self, name: Option<&str>) -> Result<Option<&NetworkProfile>> {
+        let Some(name) = name.or(self.profile.as_deref()) else {
+            return Ok(None);
+        };
+        let network = name.parse::<Network>()?;
+        self.profiles
+            .iter()
+            .find(|(profile, _)| {
+                profile
+                    .parse::<Network>()
+                    .is_ok_and(|profile_network| profile_network == network)
+            })
+            .map(|(_, profile)| profile)
+            .map(Some)
+            .ok_or_else(|| {
+                let known: Vec<&str> = self.profiles.keys().map(String::as_str).collect();
+                ObservatoryError::invalid(format!(
+                    "unknown profile `{name}`; configured profiles: {}",
+                    if known.is_empty() {
+                        "<none>".to_string()
+                    } else {
+                        known.join(", ")
+                    }
+                ))
+            })
+    }
+
+    /// Resolve the compatibility policy, applying a selected profile override.
+    pub fn compatibility_policy_for(
+        &self,
+        profile: Option<&str>,
+    ) -> Result<crate::CompatibilityPolicy> {
+        if let Some(profile) = self.selected_profile(profile)? {
+            if let Some(policy) = &profile.policy {
+                return parse_compatibility_policy(policy);
+            }
+        }
+        parse_compatibility_policy(&self.analysis.compatibility.policy)
+    }
+
     /// Resolve the compatibility policy, validating the name.
     pub fn compatibility_policy(&self) -> Result<crate::CompatibilityPolicy> {
-        match self.analysis.compatibility.policy.as_str() {
-            "strict" => Ok(crate::CompatibilityPolicy::strict()),
-            "lenient" => Ok(crate::CompatibilityPolicy::lenient()),
-            other => Err(ObservatoryError::invalid(format!(
-                "unknown compatibility policy `{other}`; expected strict or lenient"
-            ))),
+        parse_compatibility_policy(&self.analysis.compatibility.policy)
+    }
+
+    /// Resolve the RPC endpoint, applying a selected profile override.
+    pub fn rpc_endpoint_for(&self, profile: Option<&str>) -> Result<Option<&str>> {
+        match self.selected_profile(profile)? {
+            Some(profile) if profile.endpoint.is_some() => Ok(profile.endpoint.as_deref()),
+            _ => Ok(self.rpc.endpoint.as_deref()),
         }
     }
 
@@ -249,6 +335,24 @@ impl ProjectConfig {
                 window_secs: section.window_secs,
             })
             .unwrap_or_default()
+    }
+
+    /// Resolve per-route rate-limit overrides, keyed by exact request path.
+    #[must_use]
+    pub fn route_limits(&self) -> BTreeMap<String, RateLimitConfig> {
+        self.api
+            .route_limits
+            .iter()
+            .map(|(path, section)| {
+                (
+                    path.clone(),
+                    RateLimitConfig {
+                        limit: section.limit,
+                        window_secs: section.window_secs,
+                    },
+                )
+            })
+            .collect()
     }
 
     /// Resolve the default network label, if configured.

@@ -35,7 +35,9 @@ X-API-Key: sco_<id>_<secret>
 ```
 
 Keys are random; only a SHA-256 hash is stored, and the hash is never returned.
-The plaintext is shown exactly once at creation.
+The plaintext is shown exactly once at creation. The default store is in memory;
+a `FileKeyStore` persists only ids, hashes, roles, labels, and revocation state,
+so keys survive a restart without ever writing the plaintext to disk.
 
 | Status | Body `code` | Meaning |
 | ------ | ----------- | ------- |
@@ -76,7 +78,8 @@ flag (`api serve --max-connections 64 --read-timeout-secs 10 ...`) and mirrors
 
 ## Rate limiting
 
-Fixed-window, keyed by API-key id (or client IP when unauthenticated).
+Fixed-window, keyed by API-key id (or client IP when unauthenticated) **and** the
+request path, so every endpoint has its own window.
 
 ```
 X-RateLimit-Limit: 120
@@ -84,8 +87,11 @@ X-RateLimit-Remaining: 119
 X-RateLimit-Reset: 60
 ```
 
-Exceeding the limit returns `429` with `code: "rate_limited"`. Limits are
-configurable via `PlatformConfig` (`rate_limit.limit`, `rate_limit.window_secs`).
+Exceeding the limit returns `429` with `code: "rate_limited"`. The default is
+`PlatformConfig.rate_limit`. A stricter limit for one route does not affect the
+others: set `PlatformConfig.route_limits["<exact path>"]` (or
+`api.route_limits` in the project file). The headers always report the effective
+limit for the request's route.
 
 ## Request IDs
 
@@ -122,6 +128,19 @@ Counters are process-local and monotonic. They cover every handled request,
 successful contract analyses, responses with a `4xx`/`5xx` status, and requests
 rejected by the rate limiter. The exposition is deterministic and contains no
 secrets.
+
+### `POST /api/v1/keys` (admin)
+Creates an API key. Requires `manage_keys`.
+Body: `{ "role": "viewer|developer|maintainer|admin", "label": "ci" }`.
+The response (`201`) contains the plaintext exactly once; listing never returns it.
+
+### `GET /api/v1/keys` (admin)
+Lists key metadata (id, role, label, revocation state). Requires `manage_keys`.
+Hashes, secrets, and plaintext are never included.
+
+### `DELETE /api/v1/keys/{id}` (admin)
+Revokes a key. Requires `manage_keys`. Revocation takes effect immediately; the
+next request with that key receives `401`. An unknown id returns `404`.
 
 ### `POST /api/v1/contracts/inspect`
 Body: `{ "wasm_base64": "...", "security": false }`.
@@ -202,6 +221,70 @@ Supported events are `analysis_completed`, `analysis_failed`, and
 `deployment_verified`. The response includes a random `secret` exactly once; it
 is never returned by list or get.
 
+### Signed webhook delivery
+
+`observatory_platform::deliver` signs an event and delivers it with bounded
+retries. The signature is HMAC-SHA256 over `<timestamp>.<body>`, sent as
+`X-Observatory-Signature: sha256=<hex>` with `X-Observatory-Timestamp`,
+`X-Observatory-Event`, and a stable `X-Observatory-Delivery-Id`. Transient
+failures (`408`, `429`, `5xx`, and transport errors) are retried with
+exponential backoff; other `4xx` responses are not. See
+[webhooks.md](webhooks.md) for verification steps.
+
+## API versioning and deprecation
+
+The API version is the path segment: requests are served under `/api/v1`, and
+`GET /api/v1/version` reports it as `api_version: "v1"`. The version covers the
+route set, request and response shapes, authentication requirements, status
+codes, and the meaning of a successful response.
+
+### Adding changes
+
+Additive changes ship within the current version. Examples are a new route, a
+new response field, or a new optional request field. Consumers must ignore
+response fields they do not recognise; request schemas still reject unknown
+fields, so new request fields are only compatible when they are optional.
+
+A change is breaking when it removes or renames a route or field, changes a
+field's type or the status code for an existing outcome, tightens
+authentication or validation, or changes what an existing response means. A
+breaking change requires a new API version (for example `/api/v2`). The previous
+version is not changed to accommodate it.
+
+### Deprecating and retiring
+
+A version is deprecated before it is retired:
+
+1. Deprecation is announced in this document and in `CHANGELOG.md`. The
+   announcement names the version being replaced, the replacement version, and
+   the routes or behaviours that change.
+2. The deprecated version continues to serve requests for at least one minor
+   tool release after the announcement, so consumers have a release cycle to
+   migrate.
+3. Retirement removes the version from the route table. Requests to a retired
+   version return `404`, and the version no longer appears in the OpenAPI
+   document.
+
+No calendar dates are promised. A version is retired only after the notice in
+step 1 and the overlap in step 2 have both happened. This policy can change, but
+a change that shortens notice is itself a breaking change and is documented the
+same way.
+
+### Relationship to `schema_version`
+
+`api_version` and `schema_version` are independent:
+
+- `api_version` selects the HTTP surface: routes, request bodies, and status
+  codes.
+- `schema_version` identifies the JSON report envelope and payload schemas. It
+  currently is `1.0` and appears in every success and error report.
+
+A new API version may keep the same `schema_version` when the report shapes do
+not change. A `schema_version` change does not by itself require a new API
+version when the route surface is unchanged. Consumers that parse reports should
+pin both values. The schemas are published under `docs/schemas/`; see
+[`schemas/README.md`](schemas/README.md).
+
 ## Response envelope
 
 Success:
@@ -229,6 +312,7 @@ See [`rpc-errors.md`](rpc-errors.md) for the full taxonomy.
 | Status | Meaning |
 | ------ | ------- |
 | 200 | success |
+| 201 | resource created (API key) |
 | 400 | invalid request or artifact |
 | 401 | authentication required or invalid |
 | 403 | authenticated but not permitted |
@@ -262,5 +346,6 @@ Typed Rust and TypeScript clients live under `crates/observatory-client` and
 
 - Deployment/verification endpoints over live RPC (blocked on the live
   transport, issue #13).
-- Durable persistence of keys, users, webhooks, jobs, or audit events across
-  restarts (the in-process stores are bounded and reset with the process).
+- Persistence of users, webhooks, jobs, or audit events across restarts.
+  API-key persistence is available through `FileKeyStore`; the default remains
+  in memory.

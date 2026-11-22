@@ -17,6 +17,14 @@ Use `--config <FILE>` to point at a specific file. The format is inferred from
 the extension. Parsing is **strict**: unknown fields are rejected so a typo does
 not silently disable a setting.
 
+## Per-network profiles
+
+A profile bundles overrides for one network. Declare them under `profiles`,
+keyed by network name (`public`, `testnet`, or `futurenet`), and select one with
+`--profile <NAME>` or the top-level `profile` field. The flag wins over the
+field. Profiles are validated while the file is parsed: a key that is not a
+known network, an unknown `policy`, or an invalid `endpoint` is an error.
+
 ## Schema
 
 ```yaml
@@ -36,14 +44,34 @@ api:
   rate_limit:
     limit: 120
     window_secs: 60
+  route_limits:
+    /api/v1/contracts/inspect:
+      limit: 10
+      window_secs: 60
   cors:
     allowed_origins:
       - https://app.example.com
     allowed_methods: [GET, POST, PATCH, DELETE]
     allowed_headers: [content-type, authorization, x-api-key]
 
+audit:
+  enabled:                # default: all non-experimental rules
+    - spec.error
+    - artifact.no-code
+  severity:
+    artifact.no-code: ERROR
+
 ci:
   fail_on: MISMATCH       # statuses that should fail a build
+
+profile: testnet          # profile selected when --profile is omitted
+
+profiles:
+  testnet:
+    endpoint: https://soroban-testnet.stellar.org
+    policy: lenient
+  public:
+    policy: strict
 ```
 
 The same content is valid TOML or JSON. Example TOML:
@@ -61,6 +89,10 @@ require_auth = false
 [api.rate_limit]
 limit = 60
 window_secs = 30
+
+[api.route_limits."/api/v1/contracts/inspect"]
+limit = 10
+window_secs = 60
 ```
 
 ## What the file affects
@@ -71,20 +103,34 @@ window_secs = 30
 | `analysis.compatibility.policy` | Default policy for `compat` when `--policy` is omitted. |
 | `api.require_auth` | Default authentication requirement for `api serve`. |
 | `api.rate_limit` | Default rate limit for `api serve`. |
+| `api.route_limits` | Per-route rate-limit overrides, keyed by exact request path. Unlisted routes use `api.rate_limit`. |
 | `api.cors` | Cross-origin allow-list for `api serve`; empty denies all origins. |
-| `rpc.endpoint` | Documented default endpoint (recorded; live transport is future work). |
-| `ci.fail_on` | Documented CI failure policy (advisory in this build). |
+| `audit.enabled` | Rule allow-list for `inspect --security`; defaults to every non-experimental rule. |
+| `audit.severity` | Per-rule `WARN`/`ERROR` overrides for `inspect --security`. |
+| `rpc.endpoint` | Default endpoint for `deployment inspect` when neither `--rpc-url` nor a profile overrides it. Validated and recorded; live transport is future work. |
+| `profiles.<network>.endpoint` | Endpoint override when that profile is selected. |
+| `profiles.<network>.policy` | Compatibility-policy override when that profile is selected. |
+| `profile` | Profile used when `--profile` is omitted. |
+| `ci.fail_on` | Comma-separated verification statuses that fail the build: `MISMATCH`, `INSUFFICIENT_DATA`, `ERROR`. Defaults to all three. |
 
 ## Precedence
 
-1. Explicit CLI flags (highest)
-2. `--config` file, or a discovered file
-3. Built-in defaults (lowest)
+1. Explicit CLI flags, including `--profile`, (highest)
+2. The selected profile's overrides
+3. `--config` file, or a discovered file
+4. Built-in defaults (lowest)
 
 ## Validation
 
 - Unknown top-level or nested fields are errors.
 - An unknown `analysis.compatibility.policy` is an error.
+- A profile key that is not a known network name is an error.
+- A profile `policy` other than `strict` or `lenient` is an error.
+- A profile `endpoint` must be a valid `https` endpoint (loopback `http` is allowed).
+- Selecting an unknown profile is an error.
+- An unknown `audit.enabled` or `audit.severity` rule id is an error.
+- A `ci.fail_on` status other than `MISMATCH`, `INSUFFICIENT_DATA`, or `ERROR`
+  is an error; `MATCH` is rejected.
 - An unsupported file extension is an unsupported-feature error (exit code `5`).
 
 `analysis.compatibility.policy` accepts only the `strict` and `lenient` presets.
@@ -93,6 +139,6 @@ For individual rule settings, pass a separate policy document to
 
 ## Not included
 
-Live environment-variable overrides are not implemented yet; the `rpc.endpoint`
-and `ci.fail_on` fields are recorded and documented but only `project.network`,
-`analysis.compatibility.policy`, and the `api.*` fields change behaviour today.
+Live environment-variable overrides are not implemented yet; `rpc.endpoint` is
+recorded and validated but the shipped verify/deployment commands still read
+deployed state only through RPC fixtures.

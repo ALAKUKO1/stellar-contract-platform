@@ -143,6 +143,18 @@ pub fn document() -> Value {
                     "required": ["id"],
                     "properties": { "id": { "type": "string" } }
                 },
+                "CreateKeyRequest": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": ["role", "label"],
+                    "properties": {
+                        "role": {
+                            "type": "string",
+                            "enum": ["viewer", "developer", "maintainer", "admin"]
+                        },
+                        "label": { "type": "string", "minLength": 1 }
+                    }
+                },
                 "CreateWebhookRequest": {
                     "type": "object",
                     "additionalProperties": false,
@@ -255,6 +267,7 @@ fn request_schema_for(path: &str) -> Option<&'static str> {
         "/api/v1/contracts/events" => Some("EventsRequest"),
         "/api/v1/jobs" => Some("CreateJobRequest"),
         "/api/v1/jobs/cancel" => Some("CancelJobRequest"),
+        "/api/v1/keys" => Some("CreateKeyRequest"),
         "/api/v1/webhooks" => Some("CreateWebhookRequest"),
         "/api/v1/webhooks/{id}" => Some("UpdateWebhookRequest"),
         _ => None,
@@ -293,6 +306,8 @@ fn summary_for(path: &str) -> &'static str {
         "/api/v1/jobs" => "List, create, or read background jobs",
         "/api/v1/jobs/cancel" => "Cancel a queued job",
         "/api/v1/audit/events" => "Read the structured audit log",
+        "/api/v1/keys" => "Create or list API keys",
+        "/api/v1/keys/{id}" => "Revoke an API key",
         "/api/v1/webhooks" => "List or create webhook subscriptions",
         "/api/v1/webhooks/{id}" => "Read, update, or delete a webhook subscription",
         _ => "Operation",

@@ -99,6 +99,16 @@ pub struct CancelJobRequest {
     pub id: String,
 }
 
+/// Request body for creating an API key.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CreateKeyRequest {
+    /// Role to grant: `viewer`, `developer`, `maintainer`, or `admin`.
+    pub role: String,
+    /// Human-readable label.
+    pub label: String,
+}
+
 /// Request body for creating a webhook subscription.
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]

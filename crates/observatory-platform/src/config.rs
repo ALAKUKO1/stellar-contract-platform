@@ -1,10 +1,14 @@
 //! Platform configuration with strict validation.
 
-use observatory_core::{ObservatoryError, Result};
+use std::collections::BTreeMap;
+
+use observatory_core::{Network, ObservatoryError, Result};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::ratelimit::RateLimitConfig;
+
+pub use observatory_audit::AuditConfig;
 
 /// Configuration for the platform/API layer.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -13,9 +17,14 @@ pub struct PlatformConfig {
     /// Whether analysis endpoints require authentication.
     #[serde(default = "default_true")]
     pub require_auth: bool,
-    /// Rate limiting configuration.
+    /// Default rate limit applied to any route without an override.
     #[serde(default)]
     pub rate_limit: RateLimitConfig,
+    /// Optional per-route limits, keyed by exact request path.
+    ///
+    /// A route not listed here falls back to [PlatformConfig::rate_limit].
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub route_limits: BTreeMap<String, RateLimitConfig>,
     /// Cross-origin resource sharing policy. Denies all origins by default.
     #[serde(default)]
     pub cors: CorsConfig,
@@ -30,9 +39,55 @@ impl Default for PlatformConfig {
         PlatformConfig {
             require_auth: true,
             rate_limit: RateLimitConfig::default(),
+            route_limits: BTreeMap::new(),
             cors: CorsConfig::default(),
         }
     }
+}
+
+/// A named configuration profile with per-network overrides.
+///
+/// Profiles are keyed by a network name (`public`, `testnet`, or `futurenet`)
+/// and selected explicitly through `--profile` or the `profile` field. Every
+/// override is optional; an omitted field keeps the base configuration value.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(deny_unknown_fields)]
+pub struct NetworkProfile {
+    /// Overrides `rpc.endpoint` when the profile is selected.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub endpoint: Option<String>,
+    /// Overrides `analysis.compatibility.policy` when the profile is selected.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub policy: Option<String>,
+}
+
+impl NetworkProfile {
+    /// Validate the profile's overrides without applying them.
+    pub fn validate(&self) -> Result<()> {
+        if let Some(endpoint) = &self.endpoint {
+            let _ = observatory_rpc::Endpoint::parse(endpoint)?;
+        }
+        if let Some(policy) = &self.policy {
+            match policy.as_str() {
+                "strict" | "lenient" => {}
+                other => {
+                    return Err(ObservatoryError::invalid(format!(
+                        "unknown compatibility policy `{other}` in profile; \
+                         expected strict or lenient"
+                    )))
+                }
+            }
+        }
+        Ok(())
+    }
+}
+
+/// Validate that `name` can be used as a profile key.
+///
+/// Profile keys are network labels, so a typo is rejected instead of silently
+/// creating a profile that never matches a network.
+pub fn validate_profile_name(name: &str) -> Result<()> {
+    name.parse::<Network>().map(|_| ())
 }
 
 /// A secure-by-default CORS policy.
@@ -112,6 +167,17 @@ impl PlatformConfig {
             ObservatoryError::invalid(format!("invalid platform configuration: {error}"))
         })
     }
+
+    /// The effective limit for path.
+    ///
+    /// Exact-path overrides win; otherwise the global default applies.
+    #[must_use]
+    pub fn rate_limit_for(&self, path: &str) -> RateLimitConfig {
+        self.route_limits
+            .get(path)
+            .copied()
+            .unwrap_or(self.rate_limit)
+    }
 }
 
 #[cfg(test)]
@@ -165,6 +231,91 @@ mod tests {
         assert!(!config.cors.is_allowed_origin("https://evil.example.com"));
         assert_eq!(config.cors.methods(), vec!["GET", "POST"]);
         assert_eq!(config.cors.headers(), vec!["content-type"]);
+    }
+
+    #[test]
+    fn selecting_a_profile_applies_its_overrides() {
+        let config = crate::ProjectConfig::parse(
+            "analysis:\n  compatibility:\n    policy: strict\n\
+             rpc:\n  endpoint: https://base.example.org\n\
+             profiles:\n  testnet:\n    endpoint: https://testnet.example.org\n    policy: lenient\n",
+            crate::ConfigFormat::Yaml,
+        )
+        .unwrap();
+
+        assert!(
+            !config
+                .compatibility_policy_for(Some("testnet"))
+                .unwrap()
+                .function_removal_is_breaking
+        );
+        assert_eq!(
+            config.rpc_endpoint_for(Some("testnet")).unwrap(),
+            Some("https://testnet.example.org")
+        );
+
+        // Without a selection the base configuration still applies.
+        assert!(
+            config
+                .compatibility_policy_for(None)
+                .unwrap()
+                .function_removal_is_breaking
+        );
+        assert_eq!(
+            config.rpc_endpoint_for(None).unwrap(),
+            Some("https://base.example.org")
+        );
+    }
+
+    #[test]
+    fn configured_default_profile_is_selected() {
+        let config = crate::ProjectConfig::parse(
+            "profile: public\nprofiles:\n  public:\n    policy: lenient\n",
+            crate::ConfigFormat::Yaml,
+        )
+        .unwrap();
+        assert!(
+            !config
+                .compatibility_policy_for(None)
+                .unwrap()
+                .function_removal_is_breaking
+        );
+    }
+
+    #[test]
+    fn rejects_malformed_profile_names() {
+        let error = crate::ProjectConfig::parse(
+            "profiles:\n  devnet:\n    policy: lenient\n",
+            crate::ConfigFormat::Yaml,
+        )
+        .unwrap_err();
+        assert!(matches!(error, ObservatoryError::InvalidInput(_)));
+        assert!(error.to_string().contains("unknown network `devnet`"));
+    }
+
+    #[test]
+    fn rejects_unknown_selected_profile() {
+        let error = crate::ProjectConfig::parse(
+            "profile: mainnet\nprofiles:\n  testnet:\n    policy: lenient\n",
+            crate::ConfigFormat::Yaml,
+        )
+        .unwrap_err();
+        assert!(error.to_string().contains("unknown profile `mainnet`"));
+
+        let config = crate::ProjectConfig::parse("{}", crate::ConfigFormat::Yaml).unwrap();
+        let error = config.selected_profile(Some("testnet")).unwrap_err();
+        assert!(error.to_string().contains("unknown profile `testnet`"));
+    }
+
+    #[test]
+    fn rejects_invalid_profile_overrides() {
+        for yaml in [
+            "profiles:\n  testnet:\n    policy: wild\n",
+            "profiles:\n  testnet:\n    endpoint: not-a-url\n",
+        ] {
+            let error = crate::ProjectConfig::parse(yaml, crate::ConfigFormat::Yaml).unwrap_err();
+            assert!(matches!(error, ObservatoryError::InvalidInput(_)), "{yaml}");
+        }
     }
 
     #[test]
