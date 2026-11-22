@@ -17,6 +17,15 @@ if let Some(rpc) = error.rpc_error() {
 }
 ```
 
+## Health probe
+
+`RpcClient::get_health()` wraps the published `getHealth` method and returns a
+typed `HealthResult`: `status`, `latest_ledger`, `latest_ledger_close_time`,
+`oldest_ledger`, `oldest_ledger_close_time`, and `ledger_retention_window`.
+These are the documented fields only; an incomplete or malformed result is a
+decode error rather than a partially-filled report. JSON-RPC failures use the
+same typed error mapping as every other method.
+
 ## Known kinds
 
 | Kind | Code | Meaning |

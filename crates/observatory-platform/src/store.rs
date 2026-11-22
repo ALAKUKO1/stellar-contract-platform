@@ -15,7 +15,7 @@ use observatory_core::{ObservatoryError, Result};
 use serde::{Deserialize, Serialize};
 
 use crate::auth::{ApiKeyRecord, ApiKeyStore, KeyStore, Principal};
-use crate::rbac::Role;
+use crate::rbac::{Permission, Role};
 
 /// On-disk format version.
 pub const STORE_VERSION: u32 = 1;
@@ -31,6 +31,8 @@ struct PersistedKey {
     id: String,
     hash: String,
     role: Role,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    scopes: Option<Vec<Permission>>,
     label: String,
     revoked: bool,
 }
@@ -41,6 +43,7 @@ impl From<ApiKeyRecord> for PersistedKey {
             id: record.id,
             hash: record.hash,
             role: record.role,
+            scopes: record.scopes,
             label: record.label,
             revoked: record.revoked,
         }
@@ -53,6 +56,7 @@ impl From<PersistedKey> for ApiKeyRecord {
             id: key.id,
             hash: key.hash,
             role: key.role,
+            scopes: key.scopes,
             label: key.label,
             revoked: key.revoked,
         }
@@ -149,8 +153,13 @@ impl FileKeyStore {
 }
 
 impl KeyStore for FileKeyStore {
-    fn generate(&mut self, role: Role, label: &str) -> Result<(String, ApiKeyRecord)> {
-        let result = self.inner.generate(role, label)?;
+    fn generate(
+        &mut self,
+        role: Role,
+        label: &str,
+        scopes: Option<Vec<Permission>>,
+    ) -> Result<(String, ApiKeyRecord)> {
+        let result = self.inner.generate(role, label, scopes)?;
         self.persist()?;
         Ok(result)
     }
@@ -221,7 +230,7 @@ mod tests {
         let path = temp_path();
         let (plaintext, record) = {
             let mut store = FileKeyStore::open(&path).unwrap();
-            let (plaintext, record) = store.generate(Role::Admin, "ops").unwrap();
+            let (plaintext, record) = store.generate(Role::Admin, "ops", None).unwrap();
             store.insert_hashed("fixture", "deadbeef", Role::Viewer, "fixture");
             (plaintext, record)
         };
@@ -249,7 +258,7 @@ mod tests {
         let path = temp_path();
         let (plaintext, id) = {
             let mut store = FileKeyStore::open(&path).unwrap();
-            let (plaintext, record) = store.generate(Role::Developer, "ci").unwrap();
+            let (plaintext, record) = store.generate(Role::Developer, "ci", None).unwrap();
             assert!(store.revoke(&record.id));
             (plaintext, record.id)
         };
@@ -260,6 +269,33 @@ mod tests {
             .list()
             .iter()
             .any(|key| key.id == id && key.revoked));
+
+        let _ = fs::remove_dir_all(path.parent().unwrap());
+    }
+
+    #[test]
+    fn scopes_survive_a_reopen() {
+        let path = temp_path();
+        let (plaintext, record) = {
+            let mut store = FileKeyStore::open(&path).unwrap();
+            store
+                .generate(
+                    Role::Developer,
+                    "scoped",
+                    Some(vec![crate::rbac::Permission::ReadVersion]),
+                )
+                .unwrap()
+        };
+        let reopened = FileKeyStore::open(&path).unwrap();
+        let principal = reopened.authenticate(&plaintext).unwrap();
+        assert_eq!(
+            principal.scopes,
+            Some(vec![crate::rbac::Permission::ReadVersion])
+        );
+        assert!(reopened
+            .list()
+            .iter()
+            .any(|key| key.id == record.id && key.scopes.is_some()));
 
         let _ = fs::remove_dir_all(path.parent().unwrap());
     }

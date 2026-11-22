@@ -59,6 +59,12 @@ Analysis endpoints require `run_analysis`. `GET /health`, `/readiness`,
 `/version`, and `/metrics` are public. Metrics expose only aggregate counters,
 never endpoints, keys, or payloads.
 
+A key may optionally carry `scopes`: a subset of its role's permissions. An
+absent scope list grants the full role, so existing keys are unchanged. A scoped
+key is authorized only for the intersection of its role and its scopes. Unknown
+scope names, and scopes the role does not grant, are rejected when the key is
+created.
+
 ## CORS
 
 Cross-origin access is denied by default. Configure exact origins through
@@ -92,6 +98,23 @@ Exceeding the limit returns `429` with `code: "rate_limited"`. The default is
 others: set `PlatformConfig.route_limits["<exact path>"]` (or
 `api.route_limits` in the project file). The headers always report the effective
 limit for the request's route.
+
+## Idempotency
+
+Mutating requests (`POST`, `PUT`, `PATCH`, `DELETE`) may carry an
+`Idempotency-Key` header (1-255 bytes). The first successful (`2xx`) response is
+cached for 300 seconds and replayed for an identical request; a replay carries
+`Idempotency-Replayed: true`.
+
+- Reusing a key with a different method, path, query, or body returns `409` with
+  `code: "idempotency_conflict"`.
+- Keys are scoped to the caller (API-key id, or client IP when unauthenticated),
+  so two clients can use the same key independently.
+- Only successful responses are cached; a failed request can be retried with the
+  same key.
+- The cache holds at most 128 responses and evicts the oldest entry, so unique
+  keys cannot grow memory without bound.
+- Without the header, requests behave exactly as before and are never cached.
 
 ## Request IDs
 
@@ -131,7 +154,8 @@ secrets.
 
 ### `POST /api/v1/keys` (admin)
 Creates an API key. Requires `manage_keys`.
-Body: `{ "role": "viewer|developer|maintainer|admin", "label": "ci" }`.
+Body: `{ "role": "viewer|developer|maintainer|admin", "label": "ci", "scopes": ["run_analysis"] }`.
+`scopes` is optional; when present it must be a subset of the role's permissions.
 The response (`201`) contains the plaintext exactly once; listing never returns it.
 
 ### `GET /api/v1/keys` (admin)

@@ -200,11 +200,13 @@ pub enum ErrorCode {
     Verification,
     /// An internal invariant was violated.
     Internal,
+    /// An idempotency key was reused for a different request.
+    IdempotencyConflict,
 }
 
 impl ErrorCode {
     /// Every error code, for catalog and exhaustiveness checks.
-    pub const ALL: [ErrorCode; 9] = [
+    pub const ALL: [ErrorCode; 10] = [
         ErrorCode::InvalidInput,
         ErrorCode::Io,
         ErrorCode::Decode,
@@ -214,6 +216,7 @@ impl ErrorCode {
         ErrorCode::Rpc,
         ErrorCode::Verification,
         ErrorCode::Internal,
+        ErrorCode::IdempotencyConflict,
     ];
 
     /// The stable string form used in JSON output.
@@ -229,6 +232,7 @@ impl ErrorCode {
             ErrorCode::Rpc => "rpc",
             ErrorCode::Verification => "verification",
             ErrorCode::Internal => "internal",
+            ErrorCode::IdempotencyConflict => "idempotency_conflict",
         }
     }
 }
