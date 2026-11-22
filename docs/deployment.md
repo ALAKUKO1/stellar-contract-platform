@@ -113,6 +113,38 @@ entries.
 `contract_id`, `wasm_hash`, `last_modified_ledger_seq`,
 `live_until_ledger_seq`, and `found`.
 
+## Cross-network comparison
+
+`deployment compare` compares one contract on two sides, independently reporting
+whether the deployed WASM hashes match and whether the canonical interfaces
+match. Each side is either a local artifact (`--left-wasm` / `--right-wasm`) or
+an RPC fixture (`--left-fixture` / `--right-fixture`, which requires
+`--contract`). Network labels default to `mainnet` and `testnet`.
+
+```bash
+stellar-contract-platform deployment compare \
+  --contract C... \
+  --left-fixture fixtures/mainnet.json --left-network mainnet \
+  --right-fixture fixtures/testnet.json --right-network testnet
+```
+
+```bash
+stellar-contract-platform deployment compare \
+  --left-wasm contracts/token-v1.wasm --left-network v1 \
+  --right-wasm contracts/token-v2.wasm --right-network v2 --json
+```
+
+The JSON report (`kind: deployment.compare`) contains `hash` and `interface`,
+each `match`, `mismatch`, or `unknown` (when a side lacks the information), plus
+the left and right metadata. When both interfaces are known, `interface_diff`
+lists every change with its path, severity, and detail. The command always exits
+`0`: the comparison is a report, not a policy verdict. No network access is
+required when both sides are local artifacts or fixtures.
+
+The library exposes the same pieces: `network_contract_from_wasm` for offline
+inputs, `network_contract_from_rpc` for a fixture or live transport, and
+`compare_networks`.
+
 ## Limitations
 
 - Only WASM-backed instances expose a hash; Stellar-asset contracts report no

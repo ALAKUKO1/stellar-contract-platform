@@ -6,6 +6,178 @@
 
 use std::fmt;
 
+/// Mask credential material in free-form text before it reaches an error
+/// message or a log line.
+///
+/// This is best-effort and shape-based. It masks:
+///
+/// * URL userinfo (`https://user:pass@host` becomes `https://***@host`),
+/// * `Bearer`/`Basic` authorization values, keeping the scheme,
+/// * values of `api_key`, `token`, `access_token`, `secret`, `password`,
+///   `x-api-key`, and `authorization` query/header parameters,
+/// * API key tokens starting with `sco_`.
+///
+/// Unrelated text is preserved. The function never panics on malformed input
+/// and does not depend on a regex engine.
+#[must_use]
+pub fn redact_secrets(input: &str) -> String {
+    let mut text = redact_url_userinfo(input);
+    text = redact_scheme(&text, "bearer ");
+    text = redact_scheme(&text, "basic ");
+    for key in [
+        "access_token",
+        "x-api-key",
+        "api_key",
+        "api-key",
+        "password",
+        "secret",
+        "token",
+    ] {
+        text = redact_parameter(&text, key);
+    }
+    redact_prefixed_token(&text, "sco_")
+}
+
+fn is_value_delimiter(character: char) -> bool {
+    character.is_whitespace()
+        || matches!(
+            character,
+            '"' | '\'' | ',' | ';' | '&' | '#' | '}' | ']' | ')'
+        )
+}
+
+fn redact_url_userinfo(input: &str) -> String {
+    let mut out = String::with_capacity(input.len());
+    let mut rest = input;
+    while let Some(position) = rest.find("://") {
+        let (before, after) = rest.split_at(position + 3);
+        out.push_str(before);
+        let authority_end = after
+            .find(|character: char| {
+                matches!(character, '/' | '?' | '#') || character.is_whitespace()
+            })
+            .unwrap_or(after.len());
+        let (authority, tail) = after.split_at(authority_end);
+        match authority.rfind('@') {
+            Some(at) => {
+                out.push_str("***");
+                out.push_str(&authority[at..]);
+            }
+            None => out.push_str(authority),
+        }
+        rest = tail;
+    }
+    out.push_str(rest);
+    out
+}
+
+fn redact_scheme(input: &str, scheme: &str) -> String {
+    let lower = input.to_ascii_lowercase();
+    let mut out = String::with_capacity(input.len());
+    let mut copied = 0;
+    let mut search = 0;
+    while let Some(relative) = lower[search..].find(scheme) {
+        let start = search + relative;
+        let boundary = input[..start]
+            .chars()
+            .next_back()
+            .is_none_or(|character| !character.is_alphanumeric() && character != '_');
+        if !boundary {
+            search = start + scheme.len();
+            continue;
+        }
+        let value_start = start + scheme.len();
+        let value_end = input[value_start..]
+            .find(is_value_delimiter)
+            .map_or(input.len(), |offset| value_start + offset);
+        out.push_str(&input[copied..value_start]);
+        if value_end > value_start {
+            out.push_str("***");
+        }
+        copied = value_end;
+        search = value_end;
+    }
+    out.push_str(&input[copied..]);
+    out
+}
+
+fn redact_parameter(input: &str, key: &str) -> String {
+    let lower = input.to_ascii_lowercase();
+    let mut out = String::with_capacity(input.len());
+    let mut copied = 0;
+    let mut search = 0;
+    while let Some(relative) = lower[search..].find(key) {
+        let start = search + relative;
+        let before_ok = input[..start]
+            .chars()
+            .next_back()
+            .is_none_or(|character| !character.is_alphanumeric() && character != '_');
+        let mut cursor = start + key.len();
+        let after_key = input[cursor..].chars();
+        if !before_ok {
+            search = cursor;
+            continue;
+        }
+        let mut spaces = 0;
+        for character in after_key {
+            if character == ' ' {
+                spaces += character.len_utf8();
+            } else {
+                break;
+            }
+        }
+        cursor += spaces;
+        let Some(separator) = input[cursor..].chars().next() else {
+            search = cursor;
+            continue;
+        };
+        if separator != '=' && separator != ':' {
+            search = cursor;
+            continue;
+        }
+        cursor += separator.len_utf8();
+        for character in input[cursor..].chars() {
+            if character == ' ' {
+                cursor += character.len_utf8();
+            } else {
+                break;
+            }
+        }
+        let value_start = cursor;
+        let value_end = input[value_start..]
+            .find(is_value_delimiter)
+            .map_or(input.len(), |offset| value_start + offset);
+        out.push_str(&input[copied..value_start]);
+        if value_end > value_start {
+            out.push_str("***");
+        }
+        copied = value_end;
+        search = value_end;
+    }
+    out.push_str(&input[copied..]);
+    out
+}
+
+fn redact_prefixed_token(input: &str, prefix: &str) -> String {
+    let mut out = String::with_capacity(input.len());
+    let mut copied = 0;
+    let mut search = 0;
+    while let Some(relative) = input[search..].find(prefix) {
+        let start = search + relative;
+        let value_end = input[start..]
+            .find(|character: char| {
+                !(character.is_ascii_alphanumeric() || character == '_' || character == '-')
+            })
+            .map_or(input.len(), |offset| start + offset);
+        out.push_str(&input[copied..start]);
+        out.push_str("***");
+        copied = value_end;
+        search = value_end;
+    }
+    out.push_str(&input[copied..]);
+    out
+}
+
 /// Stable, machine-readable error codes emitted in JSON error reports.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -153,7 +325,7 @@ impl RpcError {
         RpcError {
             kind,
             code,
-            message: message.into(),
+            message: redact_secrets(&message.into()),
         }
     }
 
@@ -287,27 +459,27 @@ pub enum ObservatoryError {
 impl ObservatoryError {
     /// Construct an invalid-input error.
     pub fn invalid(message: impl Into<String>) -> Self {
-        ObservatoryError::InvalidInput(message.into())
+        ObservatoryError::InvalidInput(redact_secrets(&message.into()))
     }
 
     /// Construct a decode error.
     pub fn decode(message: impl Into<String>) -> Self {
-        ObservatoryError::Decode(message.into())
+        ObservatoryError::Decode(redact_secrets(&message.into()))
     }
 
     /// Construct an unsupported-feature error.
     pub fn unsupported(message: impl Into<String>) -> Self {
-        ObservatoryError::Unsupported(message.into())
+        ObservatoryError::Unsupported(redact_secrets(&message.into()))
     }
 
     /// Construct a WASM error.
     pub fn wasm(message: impl Into<String>) -> Self {
-        ObservatoryError::Wasm(message.into())
+        ObservatoryError::Wasm(redact_secrets(&message.into()))
     }
 
     /// Construct a spec error.
     pub fn spec(message: impl Into<String>) -> Self {
-        ObservatoryError::Spec(message.into())
+        ObservatoryError::Spec(redact_secrets(&message.into()))
     }
 
     /// Construct a transport-level RPC error with no JSON-RPC code.
@@ -322,12 +494,12 @@ impl ObservatoryError {
 
     /// Construct a verification error.
     pub fn verification(message: impl Into<String>) -> Self {
-        ObservatoryError::Verification(message.into())
+        ObservatoryError::Verification(redact_secrets(&message.into()))
     }
 
     /// Construct an internal error.
     pub fn internal(message: impl Into<String>) -> Self {
-        ObservatoryError::Internal(message.into())
+        ObservatoryError::Internal(redact_secrets(&message.into()))
     }
 
     /// The stable machine-readable error code.
@@ -451,6 +623,60 @@ mod tests {
         assert_eq!(
             error.rpc_error().map(RpcError::kind),
             Some(RpcErrorKind::MethodNotFound)
+        );
+    }
+
+    #[test]
+    fn redacts_url_credentials_and_query_secrets() {
+        let input = "cannot reach https://user:pass@example.org/rpc?api_key=SECRET&token=TOKEN";
+        let redacted = redact_secrets(input);
+        assert!(!redacted.contains("user"));
+        assert!(!redacted.contains("pass"));
+        assert!(!redacted.contains("SECRET"));
+        assert!(!redacted.contains("TOKEN"));
+        assert!(redacted.contains("https://***@example.org/rpc"));
+    }
+
+    #[test]
+    fn redacts_authorization_headers() {
+        let input = "Authorization: Bearer abc123.def and authorization: basic dXNlcjpwYXNz";
+        let redacted = redact_secrets(input);
+        assert!(!redacted.contains("abc123.def"));
+        assert!(!redacted.contains("dXNlcjpwYXNz"));
+        assert!(redacted.contains("Bearer ***"));
+        assert!(redacted.contains("basic ***"));
+    }
+
+    #[test]
+    fn redacts_api_key_parameters_and_tokens() {
+        let input = "x-api-key: sco_abc_secretsecret api_key=plain&access_token=other";
+        let redacted = redact_secrets(input);
+        for secret in ["sco_abc_secretsecret", "plain", "other"] {
+            assert!(!redacted.contains(secret), "{redacted}");
+        }
+        assert!(redacted.contains("x-api-key: ***"));
+        assert!(redacted.contains("api_key=***"));
+    }
+
+    #[test]
+    fn leaves_unrelated_text_alone() {
+        let input = "invalid contract id: tokenizer failed";
+        assert_eq!(redact_secrets(input), input);
+    }
+
+    #[test]
+    fn constructed_errors_and_rpc_errors_are_redacted() {
+        let error = ObservatoryError::invalid("bad url https://user:pass@example.org");
+        assert!(!error.to_string().contains("user"));
+        assert!(!error.to_string().contains("pass"));
+        assert_eq!(error.code(), ErrorCode::InvalidInput);
+
+        let error = ObservatoryError::rpc("Bearer secret-token failed");
+        assert!(!error.to_string().contains("secret-token"));
+        assert_eq!(error.code(), ErrorCode::Rpc);
+        assert_eq!(
+            error.rpc_error().map(RpcError::kind),
+            Some(RpcErrorKind::Transport)
         );
     }
 }

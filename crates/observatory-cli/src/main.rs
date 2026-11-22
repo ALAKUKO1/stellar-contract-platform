@@ -175,6 +175,30 @@ enum DeploymentCommand {
         #[arg(long)]
         rpc_url: Option<String>,
     },
+    /// Compare one contract across two networks or local artifacts.
+    Compare {
+        /// Contract id (required when either side uses an RPC fixture).
+        #[arg(long)]
+        contract: Option<String>,
+        /// Local WASM artifact for the left side.
+        #[arg(long, conflicts_with = "left_fixture")]
+        left_wasm: Option<PathBuf>,
+        /// RPC fixture for the left side (requires `--contract`).
+        #[arg(long)]
+        left_fixture: Option<PathBuf>,
+        /// Network label for the left side.
+        #[arg(long, default_value = "mainnet")]
+        left_network: String,
+        /// Local WASM artifact for the right side.
+        #[arg(long, conflicts_with = "right_fixture")]
+        right_wasm: Option<PathBuf>,
+        /// RPC fixture for the right side (requires `--contract`).
+        #[arg(long)]
+        right_fixture: Option<PathBuf>,
+        /// Network label for the right side.
+        #[arg(long, default_value = "testnet")]
+        right_network: String,
+    },
 }
 
 #[derive(Debug, Subcommand)]
@@ -538,6 +562,34 @@ fn run(cli: &Cli, format: OutputFormat) -> Result<ObservatoryExit> {
             emit(format, "deployment", &info, || print_deployment(&info))?;
             Ok(ObservatoryExit::Success)
         }
+        Command::Deployment(DeploymentCommand::Compare {
+            contract,
+            left_wasm,
+            left_fixture,
+            left_network,
+            right_wasm,
+            right_fixture,
+            right_network,
+        }) => {
+            let contract = contract.as_deref();
+            let left = load_network_contract(
+                contract,
+                left_network,
+                left_wasm.as_deref(),
+                left_fixture.as_deref(),
+            )?;
+            let right = load_network_contract(
+                contract,
+                right_network,
+                right_wasm.as_deref(),
+                right_fixture.as_deref(),
+            )?;
+            let comparison = observatory_deployment::compare_networks(left, right);
+            emit(format, "deployment.compare", &comparison, || {
+                print_network_comparison(&comparison)
+            })?;
+            Ok(ObservatoryExit::Success)
+        }
         Command::Verify(VerifyCommand::Artifact {
             wasm,
             contract,
@@ -802,6 +854,32 @@ fn fixture_client(path: &Path) -> Result<RpcClient<MockTransport>> {
     let transport = MockTransport::from_json(&value)?;
     let endpoint = Endpoint::parse("https://fixture.invalid")?;
     Ok(RpcClient::new(endpoint, transport))
+}
+
+fn load_network_contract(
+    contract: Option<&str>,
+    network: &str,
+    wasm: Option<&Path>,
+    fixture: Option<&Path>,
+) -> Result<observatory_deployment::NetworkContract> {
+    match (wasm, fixture) {
+        (Some(path), None) => {
+            let bytes = observatory_wasm::load_file(path)?;
+            observatory_deployment::network_contract_from_wasm(network, contract, &bytes)
+        }
+        (None, Some(path)) => {
+            let contract = contract.ok_or_else(|| {
+                ObservatoryError::invalid(
+                    "--contract is required when a side is loaded from an RPC fixture",
+                )
+            })?;
+            let client = fixture_client(path)?;
+            observatory_deployment::network_contract_from_rpc(&client, contract, network)
+        }
+        _ => Err(ObservatoryError::invalid(
+            "each side needs exactly one of --left-wasm/--left-fixture (or the right equivalents)",
+        )),
+    }
 }
 
 fn read_text(path: &Path) -> Result<String> {
@@ -1078,6 +1156,28 @@ fn print_deployment(info: &observatory_deployment::DeploymentInfo) {
         "wasm_hash: {}",
         info.wasm_hash.as_deref().unwrap_or("<unknown>")
     );
+}
+
+fn print_network_comparison(comparison: &observatory_deployment::NetworkComparison) {
+    let verdict = |value: observatory_deployment::ComparisonVerdict| match value {
+        observatory_deployment::ComparisonVerdict::Match => "match",
+        observatory_deployment::ComparisonVerdict::Mismatch => "mismatch",
+        observatory_deployment::ComparisonVerdict::Unknown => "unknown",
+    };
+    println!(
+        "networks: {} vs {}",
+        comparison.left.network, comparison.right.network
+    );
+    println!(
+        "wasm_hash: {} ({} vs {})",
+        verdict(comparison.hash),
+        comparison.left.wasm_hash.as_deref().unwrap_or("<unknown>"),
+        comparison.right.wasm_hash.as_deref().unwrap_or("<unknown>")
+    );
+    println!("interface: {}", verdict(comparison.interface));
+    if let Some(diff) = &comparison.interface_diff {
+        print_diff(diff);
+    }
 }
 
 fn print_interface_verification(result: &observatory_verify::InterfaceVerification) {

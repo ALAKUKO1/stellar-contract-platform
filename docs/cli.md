@@ -65,6 +65,15 @@ interface fingerprint.
 Inspects a deployed contract using a deterministic RPC fixture. The live HTTP
 transport is not shipped yet; `--rpc-url` is validated and recorded only.
 
+### `deployment compare --left-wasm <FILE> | --left-fixture <FILE> --right-wasm <FILE> | --right-fixture <FILE> [--contract <ID>] [--left-network <NET>] [--right-network <NET>]`
+
+Compares one contract across two networks or local artifacts. The hash verdict
+and interface verdict are reported separately: each is `match`, `mismatch`, or
+`unknown`. When both interfaces are known, `interface_diff` carries per-change
+detail. `--contract` is required only when a side uses an RPC fixture. Network
+labels default to `mainnet` (left) and `testnet` (right). Always exits `0`. See
+[deployment.md](deployment.md#cross-network-comparison).
+
 ### `verify artifact <WASM> --contract <ID> --rpc-fixture <FILE> [--network <NET>]`
 
 Compares the local artifact hash against the deployed executable hash.
