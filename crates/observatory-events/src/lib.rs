@@ -153,6 +153,72 @@ pub fn parse_events(value: &Value) -> Result<Vec<EventRecord>> {
     array.iter().map(parse_event).collect()
 }
 
+/// Parse one event object from a `getEvents` RPC result.
+///
+/// RPC events encode `topic` and `value` as base64 `ScVal`s. The normalizer maps
+/// `contractId`, `ledger`, `txHash`, and `type`, and reuses the same rendering as
+/// fixture events. The older fixture-style `topics`/`data` keys are accepted too.
+pub fn parse_rpc_event(value: &Value) -> Result<EventRecord> {
+    let object = value
+        .as_object()
+        .ok_or_else(|| ObservatoryError::decode("RPC event must be a JSON object"))?;
+    let contract_id = object
+        .get("contractId")
+        .and_then(Value::as_str)
+        .map(str::to_string);
+    let ledger = object
+        .get("ledger")
+        .and_then(Value::as_u64)
+        .map(|value| value as u32);
+    let tx_hash = object
+        .get("txHash")
+        .and_then(Value::as_str)
+        .map(str::to_string);
+    let event_type = object
+        .get("type")
+        .and_then(Value::as_str)
+        .unwrap_or("contract")
+        .to_ascii_lowercase();
+    let topics = object
+        .get("topic")
+        .or_else(|| object.get("topics"))
+        .and_then(Value::as_array)
+        .ok_or_else(|| ObservatoryError::decode("RPC event is missing a topic array"))?;
+    let mut decoded_topics = Vec::with_capacity(topics.len());
+    for topic in topics {
+        decoded_topics.push(decode_rpc_scval(topic)?);
+    }
+    let data = object
+        .get("value")
+        .or_else(|| object.get("data"))
+        .ok_or_else(|| ObservatoryError::decode("RPC event is missing a value"))?;
+    let data = decode_rpc_scval(data)?;
+    record_from_parts(contract_id, ledger, tx_hash, event_type, &decoded_topics, &data)
+}
+
+/// Parse every event in a `getEvents` result object.
+pub fn parse_rpc_events(result: &Value) -> Result<Vec<EventRecord>> {
+    let events = result
+        .get("events")
+        .and_then(Value::as_array)
+        .ok_or_else(|| ObservatoryError::decode("getEvents result must contain an events array"))?;
+    if events.len() > MAX_EVENTS {
+        return Err(ObservatoryError::invalid(format!(
+            "getEvents result has {} events, exceeding the {MAX_EVENTS} limit",
+            events.len()
+        )));
+    }
+    events.iter().map(parse_rpc_event).collect()
+}
+
+fn decode_rpc_scval(value: &Value) -> Result<ScVal> {
+    let encoded = value
+        .as_str()
+        .ok_or_else(|| ObservatoryError::decode("RPC event ScVal must be a base64 string"))?;
+    ScVal::from_xdr_base64(encoded, Limits::none())
+        .map_err(|error| ObservatoryError::decode(format!("invalid RPC event ScVal: {error}")))
+}
+
 /// Apply a filter to a set of events.
 #[must_use]
 pub fn filter(events: &[EventRecord], filter: &EventFilter) -> Vec<EventRecord> {
@@ -671,5 +737,35 @@ mod tests {
         assert_eq!(error.code(), observatory_core::ErrorCode::Decode);
         assert!(error.to_string().contains("ContractEvent"));
         assert!(parse_events_str("not base64!!!").is_err());
+    }
+
+    #[test]
+    fn parses_a_get_events_rpc_page() {
+        let result = json!({
+            "events": [{
+                "contractId": "CAAA",
+                "ledger": 12,
+                "txHash": "deadbeef",
+                "type": "contract",
+                "topic": [symbol_base64("transfer"), symbol_base64("from")],
+                "value": symbol_base64("amount")
+            }],
+            "cursor": "next"
+        });
+        let events = parse_rpc_events(&result).unwrap();
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].contract_id.as_deref(), Some("CAAA"));
+        assert_eq!(events[0].ledger, Some(12));
+        assert_eq!(events[0].tx_hash.as_deref(), Some("deadbeef"));
+        assert_eq!(events[0].topic_symbols, vec!["transfer", "from"]);
+        assert!(events[0].data.contains("amount"));
+    }
+
+    #[test]
+    fn rejects_an_rpc_event_without_topics_or_value() {
+        let missing_topics = json!({ "value": symbol_base64("amount") });
+        assert!(parse_rpc_event(&missing_topics).is_err());
+        let missing_value = json!({ "topic": [symbol_base64("transfer")] });
+        assert!(parse_rpc_event(&missing_value).is_err());
     }
 }

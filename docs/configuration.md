@@ -40,6 +40,7 @@ rpc:
   endpoint: https://soroban-testnet.stellar.org
   connect_timeout_secs: 10   # default: 10
   read_timeout_secs: 30      # default: 30
+  max_response_bytes: 8388608  # default: 8 MiB; must be > 0
 
 api:
   require_auth: true

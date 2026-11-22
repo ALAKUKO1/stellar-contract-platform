@@ -92,5 +92,8 @@ normalized fields and do not special-case diagnostic events.
   Declared events describe *shape*; fixtures contain *instances*.
 - Topics that are not symbols or strings cannot be text-filtered, but are still
   matched against their rendered JSON.
-- Historical event retrieval over RPC is not implemented yet; fixtures are the
-  supported offline path.
+- Historical event retrieval is opt-in and offline-only in the test suite. The
+  `events --rpc-fixture` path reads a mock `getEvents` response, normalizes
+  `contractId`/`ledger`/`txHash`/`type`/`topic`/`value`, and paginates using the
+  returned cursor. Live network fetching is not wired into the CLI yet; fixtures
+  remain the supported deterministic path.
