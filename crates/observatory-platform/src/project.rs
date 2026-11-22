@@ -117,6 +117,9 @@ pub struct RpcSection {
     /// Read timeout in seconds; defaults to 30.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub read_timeout_secs: Option<u64>,
+    /// Maximum RPC response body size in bytes; defaults to 8 MiB.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_response_bytes: Option<usize>,
 }
 
 /// API/platform defaults.
@@ -303,6 +306,7 @@ impl ProjectConfig {
             let _ = observatory_rpc::Endpoint::parse(endpoint)?;
         }
         self.rpc_timeouts()?;
+        self.rpc_max_response_bytes()?;
         self.ci.failure_statuses()?;
         for (name, profile) in &self.profiles {
             validate_profile_name(name)?;
@@ -383,6 +387,24 @@ impl ProjectConfig {
                 .read_timeout_secs
                 .unwrap_or(observatory_rpc::DEFAULT_READ_TIMEOUT.as_secs()),
         )
+    }
+
+    /// Resolve the maximum RPC response body size.
+    ///
+    /// The value defaults to [`observatory_rpc::DEFAULT_MAX_RESPONSE_BYTES`] and
+    /// a configured zero is rejected at load time, because a zero-byte limit
+    /// would reject every response.
+    pub fn rpc_max_response_bytes(&self) -> Result<usize> {
+        let limit = self
+            .rpc
+            .max_response_bytes
+            .unwrap_or(observatory_rpc::DEFAULT_MAX_RESPONSE_BYTES);
+        if limit == 0 {
+            return Err(ObservatoryError::invalid(
+                "RPC maximum response size must be greater than zero",
+            ));
+        }
+        Ok(limit)
     }
 
     /// Resolve the CORS policy.
@@ -552,6 +574,27 @@ mod tests {
             assert!(matches!(error, ObservatoryError::InvalidInput(_)), "{yaml}");
             assert!(error.to_string().contains("timeout"), "{error}");
         }
+    }
+
+    #[test]
+    fn rpc_max_response_bytes_defaults_and_rejects_zero() {
+        let config = ProjectConfig::parse("{}", ConfigFormat::Yaml).unwrap();
+        assert_eq!(
+            config.rpc_max_response_bytes().unwrap(),
+            observatory_rpc::DEFAULT_MAX_RESPONSE_BYTES
+        );
+
+        let config = ProjectConfig::parse(
+            "rpc:\n  max_response_bytes: 4096\n",
+            ConfigFormat::Yaml,
+        )
+        .unwrap();
+        assert_eq!(config.rpc_max_response_bytes().unwrap(), 4096);
+
+        let error = ProjectConfig::parse("rpc:\n  max_response_bytes: 0\n", ConfigFormat::Yaml)
+            .unwrap_err();
+        assert!(matches!(error, ObservatoryError::InvalidInput(_)));
+        assert!(error.to_string().contains("response size"), "{error}");
     }
 
     #[test]

@@ -23,9 +23,18 @@ pub mod net;
 pub mod live;
 
 #[cfg(feature = "live")]
-pub use live::{HttpTransport, DEFAULT_MAX_RESPONSE_BYTES, DEFAULT_TIMEOUT};
+pub use live::{HttpTransport, DEFAULT_TIMEOUT};
 pub use net::{AddressClass, SsrfPolicy};
 pub use observatory_core::{RpcError, RpcErrorKind};
+
+/// Default maximum RPC response body size (8 MiB).
+///
+/// The live transport rejects a larger body before parsing it, so a hostile or
+/// misconfigured endpoint cannot exhaust memory.
+pub const DEFAULT_MAX_RESPONSE_BYTES: usize = 8 * 1024 * 1024;
+
+/// Maximum events accepted in a single `getEvents` page.
+pub const MAX_EVENTS_PAGE: usize = 10_000;
 
 /// A JSON-RPC transport. Implementations move already-built envelopes.
 pub trait Transport {
@@ -304,6 +313,22 @@ pub struct ContractDataResult {
     pub latest_ledger: Option<u32>,
 }
 
+/// One page of contract events returned by `getEvents`.
+///
+/// Events are kept as raw JSON so the events crate owns normalization; the
+/// client still validates the envelope and bounds the page size.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct EventsPage {
+    /// Raw event objects from the RPC response.
+    pub events: Vec<Value>,
+    /// Opaque cursor for the next page, when the server returns one.
+    pub cursor: Option<String>,
+    /// Latest ledger known to the server.
+    pub latest_ledger: Option<u32>,
+    /// Oldest ledger the server still retains events for.
+    pub oldest_ledger: Option<u32>,
+}
+
 /// A typed RPC client over a [`Transport`].
 #[derive(Debug, Clone)]
 pub struct RpcClient<T: Transport> {
@@ -467,6 +492,42 @@ impl<T: Transport> RpcClient<T> {
                 .map(|value| value as u32),
             latest_ledger: result
                 .get("latestLedger")
+                .and_then(Value::as_u64)
+                .map(|value| value as u32),
+        })
+    }
+
+    /// Fetch one page of contract events via `getEvents`.
+    ///
+    /// Pagination is the caller's responsibility: pass
+    /// `{"pagination": {"limit": n, "cursor": "..."}}` and use the returned
+    /// [`EventsPage::cursor`] for the next request. The response is bounded to
+    /// [`MAX_EVENTS_PAGE`] events before it is returned.
+    pub fn get_events(&self, params: Value) -> Result<EventsPage> {
+        let result = self.call("getEvents", params)?;
+        let events = result
+            .get("events")
+            .and_then(Value::as_array)
+            .cloned()
+            .ok_or_else(|| ObservatoryError::rpc("getEvents response had no events array"))?;
+        if events.len() > MAX_EVENTS_PAGE {
+            return Err(ObservatoryError::invalid(format!(
+                "getEvents page has {} events, exceeding the {MAX_EVENTS_PAGE} limit",
+                events.len()
+            )));
+        }
+        Ok(EventsPage {
+            events,
+            cursor: result
+                .get("cursor")
+                .and_then(Value::as_str)
+                .map(str::to_string),
+            latest_ledger: result
+                .get("latestLedger")
+                .and_then(Value::as_u64)
+                .map(|value| value as u32),
+            oldest_ledger: result
+                .get("oldestLedger")
                 .and_then(Value::as_u64)
                 .map(|value| value as u32),
         })
@@ -899,5 +960,34 @@ mod tests {
         assert!(RpcTimeouts::from_secs(1, 1).is_ok());
         assert!(RpcTimeouts::from_secs(0, 1).is_err());
         assert!(RpcTimeouts::from_secs(1, 0).is_err());
+    }
+
+    #[test]
+    fn get_events_reads_cursor_and_bounds_the_page() {
+        let transport = MockTransport::new().with_result(
+            "getEvents",
+            json!({
+                "events": [],
+                "cursor": "next-page",
+                "latestLedger": 42,
+                "oldestLedger": 7,
+            }),
+        );
+        let client = RpcClient::new(Endpoint::parse("https://example.org").unwrap(), transport);
+        let page = client
+            .get_events(json!({ "pagination": { "limit": 10 } }))
+            .unwrap();
+        assert_eq!(page.cursor.as_deref(), Some("next-page"));
+        assert_eq!(page.latest_ledger, Some(42));
+        assert_eq!(page.oldest_ledger, Some(7));
+        assert!(page.events.is_empty());
+    }
+
+    #[test]
+    fn get_events_rejects_a_missing_events_array() {
+        let transport = MockTransport::new().with_result("getEvents", json!({ "cursor": "x" }));
+        let client = RpcClient::new(Endpoint::parse("https://example.org").unwrap(), transport);
+        let error = client.get_events(json!({})).unwrap_err();
+        assert!(matches!(error, ObservatoryError::Rpc(_)));
     }
 }

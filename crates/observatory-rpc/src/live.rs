@@ -9,13 +9,13 @@ use std::time::Duration;
 use observatory_core::{ObservatoryError, Result};
 use serde_json::Value;
 
-use crate::{Endpoint, RpcTimeouts, SsrfPolicy, Transport, DEFAULT_READ_TIMEOUT};
+use crate::{
+    Endpoint, RpcTimeouts, SsrfPolicy, Transport, DEFAULT_MAX_RESPONSE_BYTES,
+    DEFAULT_READ_TIMEOUT,
+};
 
 /// Default per-request timeout, retained for compatibility.
 pub const DEFAULT_TIMEOUT: Duration = DEFAULT_READ_TIMEOUT;
-
-/// Default maximum response body size.
-pub const DEFAULT_MAX_RESPONSE_BYTES: usize = 8 * 1024 * 1024;
 
 /// A blocking HTTPS transport for the Stellar RPC JSON-RPC API.
 ///

@@ -40,9 +40,14 @@ rendered for functions and types, and for the type and per-field/case members
 printed by `--type`. Documentation is omitted when empty; nothing is invented.
 The `--json` output is unchanged.
 
-### `events <FILE> [--contract <ID>] [--topic <TEXT>] [--type <TYPE>] [--limit <N>]`
+### `events [<FILE>] [--rpc-fixture <FILE>] [--contract <ID>] [--topic <TEXT>] [--type <TYPE>] [--limit <N>]`
 
 Decodes an event fixture and filters it. `--limit` is applied last.
+
+`--rpc-fixture` instead reads a mock `getEvents` JSON-RPC fixture and paginates
+it offline: provide a `{ "__sequence": [page1, page2, ...] }` fixture where each
+page has `events`, and a `cursor` only when another page follows. Fetching is
+opt-in and offline; there is no live network path in the unit test suite.
 
 ### `diff <OLD> <NEW>`
 

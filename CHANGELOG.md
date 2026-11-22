@@ -9,6 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Events: `RpcClient::get_events` reads a bounded `getEvents` page, and
+  `observatory-events` normalizes RPC events (`topic`/`value` ScVals) into
+  `EventRecord`. `events --rpc-fixture` paginates a mock response offline (#36).
+- RPC: the maximum response body size is configurable through
+  `rpc.max_response_bytes` (default 8 MiB, zero rejected at load time) in
+  addition to the existing live-transport bound (#119).
+
 - Interface: `ContractInterface::is_subset_of` reports whether every function,
   type, and event in one interface structurally exists in another. The check
   compares canonical shapes, ignores documentation, is deterministic, and is

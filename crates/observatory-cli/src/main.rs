@@ -87,10 +87,13 @@ enum Command {
         #[arg(long, value_name = "TYPE")]
         r#type: Option<String>,
     },
-    /// Analyze contract events from a JSON fixture.
+    /// Analyze contract events from a JSON fixture or a mock `getEvents` RPC page.
     Events {
         /// Path to an event fixture JSON file.
-        file: PathBuf,
+        file: Option<PathBuf>,
+        /// Path to a mock `getEvents` RPC fixture (offline, opt-in).
+        #[arg(long, value_name = "PATH", conflicts_with = "file")]
+        rpc_fixture: Option<PathBuf>,
         /// Filter by contract id.
         #[arg(long)]
         contract: Option<String>,
@@ -434,13 +437,29 @@ fn run(cli: &Cli, format: OutputFormat) -> Result<ObservatoryExit> {
         }
         Command::Events {
             file,
+            rpc_fixture,
             contract,
             topic,
             event_type,
             limit,
         } => {
-            let text = read_text(file)?;
-            let events = observatory_events::parse_events_str(&text)?;
+            let events = match (file, rpc_fixture) {
+                (Some(file), None) => {
+                    let text = read_text(file)?;
+                    observatory_events::parse_events_str(&text)?
+                }
+                (None, Some(fixture)) => fetch_rpc_events(fixture, *limit)?,
+                (Some(_), Some(_)) => {
+                    return Err(observatory_core::ObservatoryError::invalid(
+                        "events accepts either a fixture file or --rpc-fixture, not both",
+                    ));
+                }
+                (None, None) => {
+                    return Err(observatory_core::ObservatoryError::invalid(
+                        "events requires a fixture file or --rpc-fixture",
+                    ));
+                }
+            };
             let filtered = observatory_events::filter(
                 &events,
                 &observatory_events::EventFilter {
@@ -802,6 +821,40 @@ fn fixture_client(path: &Path) -> Result<RpcClient<MockTransport>> {
     let transport = MockTransport::from_json(&value)?;
     let endpoint = Endpoint::parse("https://fixture.invalid")?;
     Ok(RpcClient::new(endpoint, transport))
+}
+
+fn fetch_rpc_events(
+    path: &Path,
+    limit: Option<usize>,
+) -> Result<Vec<observatory_events::EventRecord>> {
+    let client = fixture_client(path)?;
+    let page_limit = limit.unwrap_or(100).clamp(1, 1000);
+    let mut events = Vec::new();
+    let mut cursor: Option<String> = None;
+    // Bound the number of requests even if a fixture keeps returning a cursor.
+    for _ in 0..1000 {
+        let mut pagination = serde_json::json!({ "limit": page_limit });
+        if let Some(cursor) = &cursor {
+            pagination["cursor"] = serde_json::json!(cursor);
+        }
+        let page = client.get_events(serde_json::json!({ "pagination": pagination }))?;
+        for event in &page.events {
+            events.push(observatory_events::parse_rpc_event(event)?);
+        }
+        if events.len() > observatory_core::limits::MAX_EVENTS {
+            return Err(ObservatoryError::invalid(format!(
+                "RPC events exceeded the {} event limit",
+                observatory_core::limits::MAX_EVENTS
+            )));
+        }
+        match page.cursor {
+            Some(next) if !next.is_empty() && cursor.as_deref() != Some(next.as_str()) => {
+                cursor = Some(next);
+            }
+            _ => break,
+        }
+    }
+    Ok(events)
 }
 
 fn read_text(path: &Path) -> Result<String> {
