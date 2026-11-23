@@ -28,6 +28,7 @@ use crate::dto::{
 use crate::errors::entry as error_entry;
 use crate::http::{Request, Response};
 use crate::metrics::{self, Metrics};
+use crate::pagination::{page_of, PageRequest};
 
 /// The API version prefix.
 pub const API_PREFIX: &str = "/api/v1";
@@ -181,7 +182,7 @@ impl ApiError {
         ApiError::new("forbidden", "the API key lacks the required permission")
     }
 
-    fn bad_request(message: impl Into<String>) -> Self {
+    pub(crate) fn bad_request(message: impl Into<String>) -> Self {
         ApiError::new("bad_request", message)
     }
 
@@ -679,12 +680,9 @@ impl Api {
             }
             ("GET", "/api/v1/keys") => {
                 self.require(principal, Permission::ManageKeys)?;
-                let keys = self.list_keys();
-                Ok(response(
-                    200,
-                    "api_keys",
-                    &serde_json::json!({ "keys": keys }),
-                ))
+                let page_request = PageRequest::parse(request)?;
+                let page = page_of(self.list_keys(), page_request.skip, page_request.limit);
+                Ok(response(200, "api_keys", &page))
             }
             ("DELETE", path) if path.starts_with("/api/v1/keys/") => {
                 self.require(principal, Permission::ManageKeys)?;
@@ -830,7 +828,9 @@ impl Api {
                         None => Err(ApiError::new("not_found", "unknown job")),
                     }
                 } else {
-                    Ok(response(200, "jobs", &queue.jobs()))
+                    let page_request = PageRequest::parse(request)?;
+                    let page = page_of(queue.jobs(), page_request.skip, page_request.limit);
+                    Ok(response(200, "jobs", &page))
                 }
             }
             ("POST", "/api/v1/jobs/cancel") => {
@@ -860,7 +860,9 @@ impl Api {
             }
             ("GET", "/api/v1/audit/events") => {
                 self.require(principal, Permission::ManageKeys)?;
-                Ok(response(200, "audit", &self.audit_events()))
+                let page_request = PageRequest::parse(request)?;
+                let page = page_of(self.audit_events(), page_request.skip, page_request.limit);
+                Ok(response(200, "audit", &page))
             }
             _ => {
                 // Distinguish a known path with the wrong method from an unknown path.
@@ -895,8 +897,10 @@ impl Api {
                 Ok(response(201, "webhook", &created))
             }
             "GET" => {
+                let page_request = PageRequest::parse(request)?;
                 let subscriptions = self.webhooks.read().expect("webhook store poisoned").list();
-                Ok(response(200, "webhooks", &subscriptions))
+                let page = page_of(subscriptions, page_request.skip, page_request.limit);
+                Ok(response(200, "webhooks", &page))
             }
             _ => Err(method_not_allowed()),
         }
@@ -995,7 +999,7 @@ fn parse_webhook_events(values: &[String]) -> Result<Vec<WebhookEvent>, ApiError
         .collect()
 }
 
-fn query_value<'a>(request: &'a Request, name: &str) -> Option<&'a str> {
+pub(crate) fn query_value<'a>(request: &'a Request, name: &str) -> Option<&'a str> {
     request
         .query
         .as_deref()?
@@ -2141,6 +2145,242 @@ mod tests {
         for accept in ["*/*", "application/*"] {
             let response = api.handle(&with_accept(get("/api/v1/health"), accept), "ip", 0);
             assert_eq!(response.status, 200, "Accept: {accept}");
+        }
+    }
+
+    #[test]
+    fn keys_endpoint_paginates_deterministically() {
+        let (api, admin) = api_with_admin();
+        for i in 0..5 {
+            let create = with_key(
+                post(
+                    "/api/v1/keys",
+                    serde_json::json!({ "role": "viewer", "label": format!("k{i}") }),
+                ),
+                &admin,
+            );
+            assert_eq!(api.handle(&create, "ip", i).status, 201);
+        }
+        let mut expected: Vec<String> = api.list_keys().iter().map(|key| key.id.clone()).collect();
+        expected.sort();
+
+        let mut collected = Vec::new();
+        let mut cursor: Option<String> = None;
+        loop {
+            let query = match &cursor {
+                Some(cursor) => format!("limit=2&cursor={cursor}"),
+                None => "limit=2".to_string(),
+            };
+            let response = api.handle(
+                &with_key(get_query("/api/v1/keys", &query), &admin),
+                "ip",
+                0,
+            );
+            assert_eq!(response.status, 200);
+            let body: Value = serde_json::from_slice(&response.body).unwrap();
+            let page = &body["data"];
+            let items = page["items"].as_array().unwrap();
+            assert_eq!(page["count"].as_u64(), Some(items.len() as u64));
+            collected.extend(
+                items
+                    .iter()
+                    .map(|item| item["id"].as_str().unwrap().to_string()),
+            );
+            let has_more = page["has_more"].as_bool().unwrap();
+            assert_eq!(page["next_cursor"].is_null(), !has_more);
+            if !has_more {
+                break;
+            }
+            cursor = Some(page["next_cursor"].as_str().unwrap().to_string());
+        }
+        assert_eq!(collected, expected);
+    }
+
+    #[test]
+    fn jobs_list_paginates() {
+        let (api, key) = api_with_developer();
+        let mut created = Vec::new();
+        for i in 0..3 {
+            let response = api.handle(
+                &with_key(
+                    post(
+                        "/api/v1/jobs",
+                        serde_json::json!({ "kind": format!("j{i}") }),
+                    ),
+                    &key,
+                ),
+                "ip",
+                i,
+            );
+            assert_eq!(response.status, 201);
+            created.push(created_id(&response));
+        }
+
+        let mut collected = Vec::new();
+        let response = api.handle(
+            &with_key(get_query("/api/v1/jobs", "limit=2"), &key),
+            "ip",
+            0,
+        );
+        assert_eq!(response.status, 200);
+        let body: Value = serde_json::from_slice(&response.body).unwrap();
+        assert_eq!(body["data"]["count"].as_u64(), Some(2));
+        assert_eq!(body["data"]["has_more"].as_bool(), Some(true));
+        collected.extend(
+            body["data"]["items"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|job| job["id"].as_str().unwrap().to_string()),
+        );
+        let cursor = body["data"]["next_cursor"].as_str().unwrap().to_string();
+
+        let response = api.handle(
+            &with_key(
+                get_query("/api/v1/jobs", &format!("limit=2&cursor={cursor}")),
+                &key,
+            ),
+            "ip",
+            0,
+        );
+        assert_eq!(response.status, 200);
+        let body: Value = serde_json::from_slice(&response.body).unwrap();
+        assert_eq!(body["data"]["count"].as_u64(), Some(1));
+        assert_eq!(body["data"]["has_more"].as_bool(), Some(false));
+        assert!(body["data"]["next_cursor"].is_null());
+        collected.extend(
+            body["data"]["items"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|job| job["id"].as_str().unwrap().to_string()),
+        );
+        assert_eq!(collected, created);
+    }
+
+    #[test]
+    fn webhooks_list_paginates() {
+        let (api, key) = maintainer_api();
+        let mut created = Vec::new();
+        for i in 0..3 {
+            let create = with_key(
+                post(
+                    "/api/v1/webhooks",
+                    serde_json::json!({
+                        "url": format!("https://example.com/hook{i}"),
+                        "events": ["analysis_completed"],
+                    }),
+                ),
+                &key,
+            );
+            let response = api.handle(&create, "ip", i);
+            assert_eq!(response.status, 201);
+            created.push(created_id(&response));
+        }
+
+        let mut collected = Vec::new();
+        let response = api.handle(
+            &with_key(get_query("/api/v1/webhooks", "limit=2"), &key),
+            "ip",
+            0,
+        );
+        assert_eq!(response.status, 200);
+        let body: Value = serde_json::from_slice(&response.body).unwrap();
+        assert_eq!(body["data"]["count"].as_u64(), Some(2));
+        assert_eq!(body["data"]["has_more"].as_bool(), Some(true));
+        collected.extend(
+            body["data"]["items"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|sub| sub["id"].as_str().unwrap().to_string()),
+        );
+        let cursor = body["data"]["next_cursor"].as_str().unwrap().to_string();
+
+        let response = api.handle(
+            &with_key(
+                get_query("/api/v1/webhooks", &format!("limit=2&cursor={cursor}")),
+                &key,
+            ),
+            "ip",
+            0,
+        );
+        assert_eq!(response.status, 200);
+        let body: Value = serde_json::from_slice(&response.body).unwrap();
+        assert_eq!(body["data"]["count"].as_u64(), Some(1));
+        assert_eq!(body["data"]["has_more"].as_bool(), Some(false));
+        assert!(body["data"]["next_cursor"].is_null());
+        collected.extend(
+            body["data"]["items"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|sub| sub["id"].as_str().unwrap().to_string()),
+        );
+        created.sort();
+        assert_eq!(collected, created);
+    }
+
+    #[test]
+    fn audit_events_endpoint_is_admin_only_and_paginated() {
+        let (api, admin) = api_with_admin();
+        let developer = api.generate_key(Role::Developer, "dev").unwrap();
+        assert_eq!(
+            api.handle(&with_key(get("/api/v1/audit/events"), &developer), "ip", 0)
+                .status,
+            403
+        );
+        for i in 0..3 {
+            api.generate_key(Role::Viewer, &format!("v{i}")).unwrap();
+        }
+
+        let mut seen = 0_usize;
+        let mut cursor: Option<String> = None;
+        loop {
+            let query = match &cursor {
+                Some(cursor) => format!("limit=2&cursor={cursor}"),
+                None => "limit=2".to_string(),
+            };
+            let response = api.handle(
+                &with_key(get_query("/api/v1/audit/events", &query), &admin),
+                "ip",
+                0,
+            );
+            assert_eq!(response.status, 200);
+            let body: Value = serde_json::from_slice(&response.body).unwrap();
+            let page = &body["data"];
+            seen += page["items"].as_array().unwrap().len();
+            let has_more = page["has_more"].as_bool().unwrap();
+            assert_eq!(page["next_cursor"].is_null(), !has_more);
+            if !has_more {
+                break;
+            }
+            cursor = Some(page["next_cursor"].as_str().unwrap().to_string());
+        }
+        assert_eq!(seen, api.audit_events().len());
+        assert!(seen >= 5);
+    }
+
+    #[test]
+    fn list_endpoints_reject_bad_pagination_params() {
+        let (api, admin) = api_with_admin();
+        for path in [
+            "/api/v1/jobs",
+            "/api/v1/keys",
+            "/api/v1/webhooks",
+            "/api/v1/audit/events",
+        ] {
+            for query in [
+                "limit=0",
+                "limit=-1",
+                "limit=abc",
+                "limit=1001",
+                "cursor=%%%",
+                "cursor=abc",
+            ] {
+                let response = api.handle(&with_key(get_query(path, query), &admin), "ip", 0);
+                assert_eq!(response.status, 400, "{path}?{query}");
+            }
         }
     }
 }
