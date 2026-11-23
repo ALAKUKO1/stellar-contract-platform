@@ -1233,6 +1233,20 @@ fn print_deployment(info: &observatory_deployment::DeploymentInfo) {
         "wasm_hash: {}",
         info.wasm_hash.as_deref().unwrap_or("<unknown>")
     );
+    if let Some(storage) = &info.storage {
+        println!(
+            "storage: {} entries ({} inspected{})",
+            storage.entry_count,
+            storage.inspected_entries,
+            if storage.truncated { ", truncated" } else { "" }
+        );
+        for (kind, count) in &storage.key_types {
+            println!("  key {kind}: {count}");
+        }
+        for (kind, count) in &storage.value_types {
+            println!("  value {kind}: {count}");
+        }
+    }
 }
 
 fn print_network_comparison(comparison: &observatory_deployment::NetworkComparison) {
