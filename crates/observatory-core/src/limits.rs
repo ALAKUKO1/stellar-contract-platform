@@ -19,6 +19,9 @@ pub const MAX_EVENTS: usize = 100_000;
 /// Maximum size of an event fixture file, in bytes (64 MiB).
 pub const MAX_EVENT_FILE_BYTES: usize = 64 * 1024 * 1024;
 
+/// Maximum size of one base64-encoded event topic or data `ScVal` (1 MiB).
+pub const MAX_EVENT_XDR_BYTES: usize = 1024 * 1024;
+
 /// Maximum number of custom sections retained in an inspection report.
 pub const MAX_CUSTOM_SECTIONS: usize = 4096;
 

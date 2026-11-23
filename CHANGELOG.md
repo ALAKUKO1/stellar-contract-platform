@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Events: normalized records retain bounded base64 `ScVal` XDR in
+  `raw_topics` and `raw_data`, allowing downstream tools to independently
+  decode the exact topic and data values (#88).
+
 - Events: `RpcClient::get_events` reads a bounded `getEvents` page, and
   `observatory-events` normalizes RPC events (`topic`/`value` ScVals) into
   `EventRecord`. `events --rpc-fixture` paginates a mock response offline (#36).

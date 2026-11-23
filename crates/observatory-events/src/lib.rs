@@ -55,11 +55,11 @@
 //! shape of events, while a fixture contains concrete emitted events. This crate
 //! handles the latter.
 
-use observatory_core::limits::{MAX_EVENTS, MAX_EVENT_FILE_BYTES};
+use observatory_core::limits::{MAX_EVENTS, MAX_EVENT_FILE_BYTES, MAX_EVENT_XDR_BYTES};
 use observatory_core::{ObservatoryError, Result};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use stellar_xdr::{ContractEvent, ContractEventBody, Limits, ReadXdr, ScVal};
+use stellar_xdr::{ContractEvent, ContractEventBody, Limits, ReadXdr, ScVal, WriteXdr};
 
 /// A normalized contract event.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -74,10 +74,21 @@ pub struct EventRecord {
     pub event_type: String,
     /// Topics rendered as JSON strings, in order.
     pub topics: Vec<String>,
+    /// Original base64-encoded `ScVal` XDR topics, in order.
+    #[serde(default)]
+    pub raw_topics: Vec<String>,
     /// Symbol/string text extracted from topics, for filtering.
     pub topic_symbols: Vec<String>,
     /// Data rendered as JSON.
     pub data: String,
+    /// Original base64-encoded `ScVal` XDR data.
+    #[serde(default)]
+    pub raw_data: String,
+}
+
+struct RawScValXdr {
+    topics: Vec<String>,
+    data: String,
 }
 
 /// A filter over a set of events.
@@ -185,14 +196,17 @@ pub fn parse_rpc_event(value: &Value) -> Result<EventRecord> {
         .and_then(Value::as_array)
         .ok_or_else(|| ObservatoryError::decode("RPC event is missing a topic array"))?;
     let mut decoded_topics = Vec::with_capacity(topics.len());
+    let mut raw_topics = Vec::with_capacity(topics.len());
     for topic in topics {
-        decoded_topics.push(decode_rpc_scval(topic)?);
+        let (decoded, raw) = decode_rpc_scval(topic)?;
+        decoded_topics.push(decoded);
+        raw_topics.push(raw);
     }
     let data = object
         .get("value")
         .or_else(|| object.get("data"))
         .ok_or_else(|| ObservatoryError::decode("RPC event is missing a value"))?;
-    let data = decode_rpc_scval(data)?;
+    let (data, raw_data) = decode_rpc_scval(data)?;
     record_from_parts(
         contract_id,
         ledger,
@@ -200,6 +214,10 @@ pub fn parse_rpc_event(value: &Value) -> Result<EventRecord> {
         event_type,
         &decoded_topics,
         &data,
+        RawScValXdr {
+            topics: raw_topics,
+            data: raw_data,
+        },
     )
 }
 
@@ -218,12 +236,11 @@ pub fn parse_rpc_events(result: &Value) -> Result<Vec<EventRecord>> {
     events.iter().map(parse_rpc_event).collect()
 }
 
-fn decode_rpc_scval(value: &Value) -> Result<ScVal> {
+fn decode_rpc_scval(value: &Value) -> Result<(ScVal, String)> {
     let encoded = value
         .as_str()
         .ok_or_else(|| ObservatoryError::decode("RPC event ScVal must be a base64 string"))?;
-    ScVal::from_xdr_base64(encoded, Limits::none())
-        .map_err(|error| ObservatoryError::decode(format!("invalid RPC event ScVal: {error}")))
+    decode_bounded_scval(encoded, "RPC event ScVal")
 }
 
 /// Apply a filter to a set of events.
@@ -289,6 +306,12 @@ pub fn parse_contract_event_xdr(encoded: &str) -> Result<EventRecord> {
 
 fn record_from_contract_event(event: &ContractEvent) -> Result<EventRecord> {
     let ContractEventBody::V0(body) = &event.body;
+    let raw_topics = body
+        .topics
+        .iter()
+        .map(encode_scval)
+        .collect::<Result<Vec<_>>>()?;
+    let raw_data = encode_scval(&body.data)?;
     record_from_parts(
         event
             .contract_id
@@ -299,6 +322,10 @@ fn record_from_contract_event(event: &ContractEvent) -> Result<EventRecord> {
         event.type_.name().to_ascii_lowercase(),
         body.topics.as_slice(),
         &body.data,
+        RawScValXdr {
+            topics: raw_topics,
+            data: raw_data,
+        },
     )
 }
 
@@ -309,6 +336,7 @@ fn record_from_parts(
     event_type: String,
     topics: &[ScVal],
     data: &ScVal,
+    raw: RawScValXdr,
 ) -> Result<EventRecord> {
     let mut rendered_topics = Vec::with_capacity(topics.len());
     let mut topic_symbols = Vec::new();
@@ -325,8 +353,10 @@ fn record_from_parts(
         tx_hash,
         event_type,
         topics: rendered_topics,
+        raw_topics: raw.topics,
         topic_symbols,
         data: render_scval(data)?,
+        raw_data: raw.data,
     })
 }
 
@@ -368,22 +398,28 @@ fn parse_event(value: &Value) -> Result<EventRecord> {
         return Ok(record);
     }
     let topics_value = object.get("topics");
-    let topics = match topics_value {
+    let (topics, raw_topics) = match topics_value {
         Some(Value::Array(items)) => items
             .iter()
             .map(|item| {
                 let encoded = item.as_str().ok_or_else(|| {
                     ObservatoryError::decode("event topic must be a base64 string")
                 })?;
-                decode_scval(encoded)
+                decode_bounded_scval(encoded, "event topic")
             })
-            .collect::<Result<Vec<_>>>()?,
+            .collect::<Result<Vec<_>>>()?
+            .into_iter()
+            .unzip(),
         Some(_) => return Err(ObservatoryError::decode("`topics` must be an array")),
-        None => Vec::new(),
+        None => (Vec::new(), Vec::new()),
     };
-    let data = match object.get("data") {
-        Some(Value::String(encoded)) => decode_scval(encoded)?,
-        Some(Value::Null) | None => ScVal::Void,
+    let (data, raw_data) = match object.get("data") {
+        Some(Value::String(encoded)) => decode_bounded_scval(encoded, "event data")?,
+        Some(Value::Null) | None => {
+            let data = ScVal::Void;
+            let raw = encode_scval(&data)?;
+            (data, raw)
+        }
         Some(_) => return Err(ObservatoryError::decode("`data` must be a base64 string")),
     };
 
@@ -408,12 +444,31 @@ fn parse_event(value: &Value) -> Result<EventRecord> {
             .to_ascii_lowercase(),
         &topics,
         &data,
+        RawScValXdr {
+            topics: raw_topics,
+            data: raw_data,
+        },
     )
 }
 
-fn decode_scval(encoded: &str) -> Result<ScVal> {
-    ScVal::from_xdr_base64(encoded.trim(), Limits::none())
-        .map_err(|error| ObservatoryError::decode(format!("invalid ScVal XDR: {error}")))
+fn decode_bounded_scval(encoded: &str, description: &str) -> Result<(ScVal, String)> {
+    let encoded = encoded.trim();
+    if encoded.len() > MAX_EVENT_XDR_BYTES {
+        return Err(ObservatoryError::invalid(format!(
+            "{description} is {} bytes, exceeding the {} byte limit",
+            encoded.len(),
+            MAX_EVENT_XDR_BYTES
+        )));
+    }
+    let decoded = ScVal::from_xdr_base64(encoded, Limits::none())
+        .map_err(|error| ObservatoryError::decode(format!("invalid {description} XDR: {error}")))?;
+    Ok((decoded, encoded.to_string()))
+}
+
+fn encode_scval(value: &ScVal) -> Result<String> {
+    value
+        .to_xdr_base64(Limits::none())
+        .map_err(|error| ObservatoryError::internal(format!("failed to encode ScVal XDR: {error}")))
 }
 
 fn render_scval(value: &ScVal) -> Result<String> {
@@ -493,6 +548,9 @@ mod tests {
         assert_eq!(events.len(), 2);
         assert_eq!(events[0].topic_symbols, vec!["transfer", "from"]);
         assert!(events[0].topics[0].contains("transfer"));
+        assert_eq!(events[0].raw_topics[0], symbol_base64("transfer"));
+        assert_eq!(events[0].raw_topics[1], symbol_base64("from"));
+        assert_eq!(events[0].raw_data, symbol_base64("amount"));
         assert_eq!(events[1].event_type, "system");
     }
 
@@ -704,7 +762,10 @@ mod tests {
         assert_eq!(raw.event_type, "contract");
         assert_eq!(raw.topic_symbols, vec!["transfer", "from"]);
         assert_eq!(raw.topics.len(), 2);
+        assert_eq!(raw.raw_topics[0], symbol_base64("transfer"));
+        assert_eq!(raw.raw_topics[1], symbol_base64("from"));
         assert!(raw.data.contains("amount"));
+        assert_eq!(raw.raw_data, symbol_base64("amount"));
         assert_eq!(raw.ledger, None);
         assert_eq!(raw.tx_hash, None);
 
@@ -765,7 +826,18 @@ mod tests {
         assert_eq!(events[0].ledger, Some(12));
         assert_eq!(events[0].tx_hash.as_deref(), Some("deadbeef"));
         assert_eq!(events[0].topic_symbols, vec!["transfer", "from"]);
+        assert_eq!(events[0].raw_topics[0], symbol_base64("transfer"));
+        assert_eq!(events[0].raw_topics[1], symbol_base64("from"));
         assert!(events[0].data.contains("amount"));
+        assert_eq!(events[0].raw_data, symbol_base64("amount"));
+    }
+
+    #[test]
+    fn rejects_oversized_raw_scval() {
+        let oversized = "A".repeat(MAX_EVENT_XDR_BYTES + 1);
+        let error = decode_bounded_scval(&oversized, "event data").unwrap_err();
+        assert_eq!(error.code(), observatory_core::ErrorCode::InvalidInput);
+        assert!(error.to_string().contains("exceeding"));
     }
 
     #[test]
