@@ -9,6 +9,7 @@ use std::str::FromStr;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::RwLock;
 
+use observatory_core::error::redact_secrets;
 use observatory_core::hash::sha256_hex;
 use observatory_core::{ObservatoryError, Result as CoreResult, SCHEMA_VERSION, TOOL_NAME};
 use observatory_output::report;
@@ -243,6 +244,24 @@ impl Api {
     #[must_use]
     pub fn audit_events(&self) -> Vec<AuditEvent> {
         self.audit.read().expect("audit log poisoned").snapshot()
+    }
+
+    /// The retained audit events, redacted, oldest first.
+    ///
+    /// The audit log is built to carry no secrets; the redaction pass is
+    /// defense in depth for the read path.
+    fn redacted_audit_events(&self) -> Vec<AuditEvent> {
+        self.audit_events()
+            .into_iter()
+            .map(|mut event| {
+                event.actor = event.actor.map(|value| redact_secrets(&value));
+                event.action = redact_secrets(&event.action);
+                event.resource = redact_secrets(&event.resource);
+                event.outcome = redact_secrets(&event.outcome);
+                event.request_id = event.request_id.map(|value| redact_secrets(&value));
+                event
+            })
+            .collect()
     }
 
     fn record_audit(
@@ -861,7 +880,11 @@ impl Api {
             ("GET", "/api/v1/audit/events") => {
                 self.require(principal, Permission::ManageKeys)?;
                 let page_request = PageRequest::parse(request)?;
-                let page = page_of(self.audit_events(), page_request.skip, page_request.limit);
+                let page = page_of(
+                    self.redacted_audit_events(),
+                    page_request.skip,
+                    page_request.limit,
+                );
                 Ok(response(200, "audit", &page))
             }
             _ => {
@@ -2322,7 +2345,7 @@ mod tests {
     }
 
     #[test]
-    fn audit_events_endpoint_is_admin_only_and_paginated() {
+    fn audit_events_endpoint_is_admin_only_redacted_and_paginated() {
         let (api, admin) = api_with_admin();
         let developer = api.generate_key(Role::Developer, "dev").unwrap();
         assert_eq!(
@@ -2330,8 +2353,9 @@ mod tests {
                 .status,
             403
         );
+        let mut plaintexts = Vec::new();
         for i in 0..3 {
-            api.generate_key(Role::Viewer, &format!("v{i}")).unwrap();
+            plaintexts.push(api.generate_key(Role::Viewer, &format!("v{i}")).unwrap());
         }
 
         let mut seen = 0_usize;
@@ -2347,6 +2371,14 @@ mod tests {
                 0,
             );
             assert_eq!(response.status, 200);
+            let text = String::from_utf8_lossy(&response.body);
+            assert!(
+                !text.contains("sco_"),
+                "the audit read path must never leak key material"
+            );
+            for plaintext in &plaintexts {
+                assert!(!text.contains(plaintext.as_str()));
+            }
             let body: Value = serde_json::from_slice(&response.body).unwrap();
             let page = &body["data"];
             seen += page["items"].as_array().unwrap().len();

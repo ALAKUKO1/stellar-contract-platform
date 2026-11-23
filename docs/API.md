@@ -255,8 +255,10 @@ returns a structured `400`.
 ### `GET /api/v1/audit/events`
 Requires `manage_keys` (admin). Returns structured audit events with
 `schema_version`, `timestamp`, `actor` (public key id), `action`, `resource`,
-`outcome`, and `request_id`, paginated as a [`Page`](#pagination). Secrets
-and plaintext keys are never recorded.
+`outcome`, and `request_id`, paginated as a [`Page`](#pagination). Events are
+redacted with the standard secret-redaction pass, so they contain no secrets;
+key ids, job ids, and paths remain readable. The log itself is built to carry
+no secrets, and secrets and plaintext keys are never recorded.
 ### Webhook subscriptions
 
 Webhook registration requires `manage_webhooks` (the `maintainer` or `admin`
