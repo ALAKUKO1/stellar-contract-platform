@@ -369,6 +369,15 @@ impl Api {
     /// Handle a request.
     #[must_use]
     pub fn handle(&self, request: &Request, client_id: &str, now_secs: u64) -> Response {
+        // Request-level span; covers routing, authorization, and audit
+        // recording. Fields are route metadata only, never artifact bytes.
+        let span = tracing::info_span!(
+            "http_request",
+            method = %request.method,
+            path = %request.path,
+            client = %client_id,
+        );
+        let _span_guard = span.enter();
         let request_id = format!(
             "req-{:016x}",
             self.counter.fetch_add(1, Ordering::Relaxed) + 1
@@ -2414,5 +2423,55 @@ mod tests {
                 assert_eq!(response.status, 400, "{path}?{query}");
             }
         }
+    }
+
+    #[test]
+    fn handle_emits_a_request_span() {
+        use std::sync::atomic::{AtomicU64, Ordering};
+        use std::sync::{Arc, Mutex};
+
+        #[derive(Clone)]
+        struct SpanRecorder {
+            names: Arc<Mutex<Vec<String>>>,
+            next: Arc<AtomicU64>,
+        }
+
+        impl tracing::Subscriber for SpanRecorder {
+            fn enabled(&self, _metadata: &tracing::Metadata<'_>) -> bool {
+                true
+            }
+
+            fn new_span(&self, span: &tracing::span::Attributes<'_>) -> tracing::span::Id {
+                self.names
+                    .lock()
+                    .unwrap()
+                    .push(span.metadata().name().to_string());
+                let next = self.next.fetch_add(1, Ordering::Relaxed) + 1;
+                tracing::span::Id::from_u64(next)
+            }
+
+            fn record(&self, _span: &tracing::span::Id, _values: &tracing::span::Record<'_>) {}
+
+            fn record_follows_from(&self, _span: &tracing::span::Id, _follows: &tracing::span::Id) {
+            }
+
+            fn event(&self, _event: &tracing::Event<'_>) {}
+
+            fn enter(&self, _span: &tracing::span::Id) {}
+
+            fn exit(&self, _span: &tracing::span::Id) {}
+        }
+
+        let recorder = SpanRecorder {
+            names: Arc::new(Mutex::new(Vec::new())),
+            next: Arc::new(AtomicU64::new(0)),
+        };
+        let names = recorder.names.clone();
+        tracing::subscriber::with_default(recorder, || {
+            let api = Api::new(PlatformConfig::default());
+            let _ = api.handle(&get("/api/v1/health"), "ip", 0);
+        });
+        let names = names.lock().unwrap();
+        assert!(names.iter().any(|name| name == "http_request"));
     }
 }
