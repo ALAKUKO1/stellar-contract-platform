@@ -6,6 +6,10 @@
         "data": "\"void\"",
         "event_type": "contract",
         "ledger": 10,
+        "raw_data": "AAAAAQ==",
+        "raw_topics": [
+          "AAAADwAAAAh0cmFuc2Zlcg=="
+        ],
         "topic_symbols": [
           "transfer"
         ],

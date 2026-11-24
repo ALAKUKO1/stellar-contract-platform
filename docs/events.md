@@ -3,6 +3,13 @@
 `events` decodes a fixture of concrete emitted events and filters it. This is
 different from the *declared* events in the contract specification.
 
+Each normalized event retains both representations of every topic and its data:
+`topics` and `data` contain stable rendered JSON, while `raw_topics` and
+`raw_data` contain the original base64 `ScVal` XDR for independent decoding and
+verification. Raw fixture and RPC values are preserved verbatim after trimming;
+values extracted from a raw `ContractEvent` are canonically re-encoded. A single
+raw topic or data value is limited to 1 MiB.
+
 ## Fixture format
 
 ```json
