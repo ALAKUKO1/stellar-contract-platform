@@ -6,8 +6,8 @@
 //! (jobs, keys, and webhooks are id-ordered; audit events are oldest-first).
 //!
 //! The cursor encodes the number of items the endpoint has already returned,
-//! so it is opaque to clients: encode it with [`encode_cursor`] and decode it
-//! with [`decode_cursor`] (used by [`PageRequest::parse`]).
+//! so it is opaque to clients: encode it with `encode_cursor` and decode it
+//! with `decode_cursor` (used by [`PageRequest::parse`]).
 
 use base64::engine::Engine as _;
 use serde::Serialize;

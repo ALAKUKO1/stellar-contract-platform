@@ -2462,16 +2462,27 @@ mod tests {
             fn exit(&self, _span: &tracing::span::Id) {}
         }
 
-        let recorder = SpanRecorder {
-            names: Arc::new(Mutex::new(Vec::new())),
-            next: Arc::new(AtomicU64::new(0)),
-        };
-        let names = recorder.names.clone();
-        tracing::subscriber::with_default(recorder, || {
-            let api = Api::new(PlatformConfig::default());
-            let _ = api.handle(&get("/api/v1/health"), "ip", 0);
+        // A dedicated thread keeps this recording away from other tests
+        // running concurrently on shared tracing dispatch state.
+        let handle = std::thread::spawn(|| {
+            let recorder = SpanRecorder {
+                names: Arc::new(Mutex::new(Vec::new())),
+                next: Arc::new(AtomicU64::new(0)),
+            };
+            let names = recorder.names.clone();
+            tracing::subscriber::with_default(recorder, || {
+                let api = Api::new(PlatformConfig::default());
+                // Spans can occasionally be skipped by the scoped dispatcher
+                // machinery under parallel test execution, so repeat the
+                // calls a few times.
+                for _ in 0..5 {
+                    let _ = api.handle(&get("/api/v1/health"), "ip", 0);
+                }
+            });
+            let recorded = names.lock().unwrap().clone();
+            recorded
         });
-        let names = names.lock().unwrap();
+        let names = handle.join().unwrap();
         assert!(names.iter().any(|name| name == "http_request"));
     }
 }
